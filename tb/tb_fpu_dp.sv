@@ -1,9 +1,10 @@
 //=============================================================================
-// GPGPU-1 Double-Precision FPU Testbench
+// GPGPU-1 Double-Precision FPU Testbench (Pipelined)
 //=============================================================================
 // File:        tb_fpu_dp.sv
-// Description: Tests double-precision floating-point operations
-// Version:     1.0
+// Description: Tests double-precision floating-point operations with
+//              proper pipeline latency handling.
+// Version:     2.0
 // Date:        January 1, 2026
 //=============================================================================
 
@@ -19,6 +20,13 @@ module tb_fpu_dp;
     //=========================================================================
     
     parameter CLK_PERIOD = 10;
+    
+    // Expected latencies (from FPU module)
+    localparam LATENCY_SIMPLE = 1;   // MIN, MAX, ABS, NEG, CMP
+    localparam LATENCY_ADD    = 3;   // FADD, FSUB
+    localparam LATENCY_MUL    = 4;   // FMUL
+    localparam LATENCY_FMA    = 5;   // FMADD
+    localparam LATENCY_DIV    = 12;  // FDIV
     
     //=========================================================================
     // DUT Signals
@@ -77,7 +85,6 @@ module tb_fpu_dp;
     // IEEE 754 Double Precision Constants
     //=========================================================================
     
-    // Useful DP values (64-bit)
     localparam logic [63:0] DP_ZERO        = 64'h0000000000000000;  // 0.0
     localparam logic [63:0] DP_ONE         = 64'h3FF0000000000000;  // 1.0
     localparam logic [63:0] DP_TWO         = 64'h4000000000000000;  // 2.0
@@ -93,8 +100,8 @@ module tb_fpu_dp;
     localparam logic [63:0] DP_NEG_ONE     = 64'hBFF0000000000000;  // -1.0
     localparam logic [63:0] DP_NEG_TWO     = 64'hC000000000000000;  // -2.0
     localparam logic [63:0] DP_NEG_THREE   = 64'hC008000000000000;  // -3.0
+    localparam logic [63:0] DP_NEG_FIVE    = 64'hC014000000000000;  // -5.0
     localparam logic [63:0] DP_PI          = 64'h400921FB54442D18;  // pi (approx)
-    localparam logic [63:0] DP_E           = 64'h4005BF0A8B145769;  // e (approx)
     localparam logic [63:0] DP_INF         = 64'h7FF0000000000000;  // +Infinity
     localparam logic [63:0] DP_NEG_INF     = 64'hFFF0000000000000;  // -Infinity
     localparam logic [63:0] DP_NAN         = 64'h7FF8000000000000;  // Quiet NaN
@@ -106,16 +113,58 @@ module tb_fpu_dp;
     // Test Tasks
     //=========================================================================
     
+    task automatic reset();
+        rst_n = 1'b0;
+        valid_in = 1'b0;
+        opcode = OP_FADD;
+        func = FUNC_DP;
+        active_mask = 8'hFF;
+        
+        for (int i = 0; i < WARP_SIZE; i++) begin
+            operand_a[i] = DP_ZERO;
+            operand_b[i] = DP_ZERO;
+            operand_c[i] = DP_ZERO;
+        end
+        
+        repeat(3) @(posedge clk);
+        rst_n = 1'b1;
+        @(posedge clk);
+    endtask
+    
+    // Wait for result using valid_out
+    task automatic wait_for_result();
+        int timeout;
+        timeout = 0;
+        while (!valid_out && timeout < 20) begin
+            @(posedge clk);
+            #1;
+            timeout++;
+        end
+    endtask
+    
+    // Issue operation and wait for latency cycles
+    task automatic issue_and_wait(input int latency);
+        valid_in = 1'b1;
+        @(posedge clk);
+        #1;
+        valid_in = 1'b0;
+        
+        // Wait for remaining cycles (latency - 1, since we already advanced 1)
+        repeat(latency - 1) @(posedge clk);
+        #1;
+    endtask
+    
     task automatic check_dp_result(
         input string test_name,
         input logic [63:0] expected,
         input logic [63:0] actual
     );
         test_count++;
-        // Allow small tolerance for FP rounding
+        // Allow small tolerance for FP rounding (exponent within 1, same sign)
         if (actual == expected || 
             (expected != 64'h0 && actual != 64'h0 && 
-             ($signed(actual[62:52]) - $signed(expected[62:52])) inside {-1, 0, 1} &&
+             $signed(actual[62:52]) - $signed(expected[62:52]) >= -1 &&
+             $signed(actual[62:52]) - $signed(expected[62:52]) <= 1 &&
              actual[63] == expected[63])) begin
             $display("[PASS] %s: Expected 0x%016X, Got 0x%016X", test_name, expected, actual);
             pass_count++;
@@ -140,13 +189,28 @@ module tb_fpu_dp;
         end
     endtask
     
+    task automatic check_nan(
+        input string test_name,
+        input logic [63:0] actual
+    );
+        test_count++;
+        // NaN has exponent all 1s and non-zero mantissa
+        if (actual[62:52] == 11'h7FF && actual[51:0] != 52'h0) begin
+            $display("[PASS] %s: Got NaN 0x%016X", test_name, actual);
+            pass_count++;
+        end else begin
+            $display("[FAIL] %s: Expected NaN, Got 0x%016X", test_name, actual);
+            fail_count++;
+        end
+    endtask
+    
     //=========================================================================
     // Main Test Sequence
     //=========================================================================
     
     initial begin
         $display("==============================================");
-        $display("Double-Precision FPU Testbench");
+        $display("Double-Precision Pipelined FPU Testbench");
         $display("==============================================");
         
         // Initialize
@@ -154,52 +218,36 @@ module tb_fpu_dp;
         pass_count = 0;
         fail_count = 0;
         
-        rst_n = 0;
-        valid_in = 0;
-        opcode = OP_FADD;
-        func = FUNC_DP;
-        active_mask = 8'hFF;
-        
-        for (int i = 0; i < WARP_SIZE; i++) begin
-            operand_a[i] = DP_ZERO;
-            operand_b[i] = DP_ZERO;
-            operand_c[i] = DP_ZERO;
-        end
-        
-        // Reset
-        #(CLK_PERIOD * 2);
-        rst_n = 1;
-        #(CLK_PERIOD * 2);
+        reset();
         
         //=====================================================================
-        // Test 1: DP Addition
+        // Test 1: DP Addition (Latency = 3 cycles)
         //=====================================================================
         $display("\n--- Test: DADD (Double-Precision Add) ---");
         
         opcode = OP_FADD;
         func = FUNC_DP;
-        valid_in = 1;
         
         // 1.0 + 2.0 = 3.0
         operand_a[0] = DP_ONE;
         operand_b[0] = DP_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         check_dp_result("DADD 1.0 + 2.0 = 3.0", DP_THREE, result[0]);
         
         // 5.0 + (-2.0) = 3.0
         operand_a[0] = DP_FIVE;
         operand_b[0] = DP_NEG_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         check_dp_result("DADD 5.0 + (-2.0) = 3.0", DP_THREE, result[0]);
         
         // 0.0 + 0.0 = 0.0
         operand_a[0] = DP_ZERO;
         operand_b[0] = DP_ZERO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         check_dp_exact("DADD 0.0 + 0.0 = 0.0", DP_ZERO, result[0]);
         
         //=====================================================================
-        // Test 2: DP Subtraction
+        // Test 2: DP Subtraction (Latency = 3 cycles)
         //=====================================================================
         $display("\n--- Test: DSUB (Double-Precision Subtract) ---");
         
@@ -209,17 +257,17 @@ module tb_fpu_dp;
         // 5.0 - 2.0 = 3.0
         operand_a[0] = DP_FIVE;
         operand_b[0] = DP_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         check_dp_result("DSUB 5.0 - 2.0 = 3.0", DP_THREE, result[0]);
         
         // 1.0 - 1.0 = 0.0
         operand_a[0] = DP_ONE;
         operand_b[0] = DP_ONE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         check_dp_exact("DSUB 1.0 - 1.0 = 0.0", DP_ZERO, result[0]);
         
         //=====================================================================
-        // Test 3: DP Multiplication
+        // Test 3: DP Multiplication (Latency = 4 cycles)
         //=====================================================================
         $display("\n--- Test: DMUL (Double-Precision Multiply) ---");
         
@@ -229,23 +277,23 @@ module tb_fpu_dp;
         // 2.0 * 3.0 = 6.0
         operand_a[0] = DP_TWO;
         operand_b[0] = DP_THREE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_MUL);
         check_dp_result("DMUL 2.0 * 3.0 = 6.0", DP_SIX, result[0]);
         
         // 2.0 * 5.0 = 10.0
         operand_a[0] = DP_TWO;
         operand_b[0] = DP_FIVE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_MUL);
         check_dp_result("DMUL 2.0 * 5.0 = 10.0", DP_TEN, result[0]);
         
         // x * 0 = 0
         operand_a[0] = DP_PI;
         operand_b[0] = DP_ZERO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_MUL);
         check_dp_exact("DMUL pi * 0.0 = 0.0", DP_ZERO, result[0]);
         
         //=====================================================================
-        // Test 4: DP Division
+        // Test 4: DP Division (Latency = 12 cycles)
         //=====================================================================
         $display("\n--- Test: DDIV (Double-Precision Divide) ---");
         
@@ -255,23 +303,23 @@ module tb_fpu_dp;
         // 6.0 / 2.0 = 3.0
         operand_a[0] = DP_SIX;
         operand_b[0] = DP_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_DIV);
         check_dp_result("DDIV 6.0 / 2.0 = 3.0", DP_THREE, result[0]);
         
         // 10.0 / 2.0 = 5.0
         operand_a[0] = DP_TEN;
         operand_b[0] = DP_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_DIV);
         check_dp_result("DDIV 10.0 / 2.0 = 5.0", DP_FIVE, result[0]);
         
         // 1.0 / 0.0 = inf
         operand_a[0] = DP_ONE;
         operand_b[0] = DP_ZERO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_DIV);
         check_dp_exact("DDIV 1.0 / 0.0 = inf", DP_INF, result[0]);
         
         //=====================================================================
-        // Test 5: DP FMA (Fused Multiply-Add)
+        // Test 5: DP FMA (Latency = 5 cycles)
         //=====================================================================
         $display("\n--- Test: DFMA (Double-Precision Fused Multiply-Add) ---");
         
@@ -282,25 +330,25 @@ module tb_fpu_dp;
         operand_a[0] = DP_TWO;
         operand_b[0] = DP_THREE;
         operand_c[0] = DP_FOUR;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_FMA);
         check_dp_result("DFMA 2.0 * 3.0 + 4.0 = 10.0", DP_TEN, result[0]);
         
         // 3.0 * 4.0 + 0.0 = 12.0
         operand_a[0] = DP_THREE;
         operand_b[0] = DP_FOUR;
         operand_c[0] = DP_ZERO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_FMA);
         check_dp_result("DFMA 3.0 * 4.0 + 0.0 = 12.0", DP_TWELVE, result[0]);
         
         // 0.0 * 5.0 + 7.0 = 7.0
         operand_a[0] = DP_ZERO;
         operand_b[0] = DP_FIVE;
         operand_c[0] = DP_SEVEN;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_FMA);
         check_dp_result("DFMA 0.0 * 5.0 + 7.0 = 7.0", DP_SEVEN, result[0]);
         
         //=====================================================================
-        // Test 6: DP Min/Max
+        // Test 6: DP Min/Max (Latency = 1 cycle)
         //=====================================================================
         $display("\n--- Test: DMIN/DMAX (Double-Precision Min/Max) ---");
         
@@ -310,24 +358,24 @@ module tb_fpu_dp;
         // min(5.0, 2.0) = 2.0
         operand_a[0] = DP_FIVE;
         operand_b[0] = DP_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_SIMPLE);
         check_dp_exact("DMIN(5.0, 2.0) = 2.0", DP_TWO, result[0]);
         
         opcode = OP_FMAX;
         // max(5.0, 2.0) = 5.0
         operand_a[0] = DP_FIVE;
         operand_b[0] = DP_TWO;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_SIMPLE);
         check_dp_exact("DMAX(5.0, 2.0) = 5.0", DP_FIVE, result[0]);
         
         // max(-1.0, 1.0) = 1.0
         operand_a[0] = DP_NEG_ONE;
         operand_b[0] = DP_ONE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_SIMPLE);
         check_dp_exact("DMAX(-1.0, 1.0) = 1.0", DP_ONE, result[0]);
         
         //=====================================================================
-        // Test 7: DP Abs/Neg
+        // Test 7: DP Abs/Neg (Latency = 1 cycle)
         //=====================================================================
         $display("\n--- Test: DABS/DNEG (Double-Precision Abs/Neg) ---");
         
@@ -335,19 +383,19 @@ module tb_fpu_dp;
         func = FUNC_DP;
         
         // abs(-5.0) = 5.0
-        operand_a[0] = 64'hC014000000000000;  // -5.0
-        #(CLK_PERIOD);
+        operand_a[0] = DP_NEG_FIVE;
+        issue_and_wait(LATENCY_SIMPLE);
         check_dp_exact("DABS(-5.0) = 5.0", DP_FIVE, result[0]);
         
         // abs(5.0) = 5.0
         operand_a[0] = DP_FIVE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_SIMPLE);
         check_dp_exact("DABS(5.0) = 5.0", DP_FIVE, result[0]);
         
         opcode = OP_FNEG;
         // neg(3.0) = -3.0
         operand_a[0] = DP_THREE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_SIMPLE);
         check_dp_exact("DNEG(3.0) = -3.0", DP_NEG_THREE, result[0]);
         
         //=====================================================================
@@ -361,41 +409,28 @@ module tb_fpu_dp;
         // NaN + x = NaN
         operand_a[0] = DP_NAN;
         operand_b[0] = DP_ONE;
-        #(CLK_PERIOD);
-        // Check that result is NaN (exponent all 1s, non-zero mantissa)
-        test_count++;
-        if (result[0][62:52] == 11'h7FF && result[0][51:0] != 52'h0) begin
-            $display("[PASS] DADD NaN + 1.0 = NaN");
-            pass_count++;
-        end else begin
-            $display("[FAIL] DADD NaN + 1.0 = NaN: Got 0x%016X", result[0]);
-            fail_count++;
-        end
+        issue_and_wait(LATENCY_ADD);
+        check_nan("DADD NaN + 1.0 = NaN", result[0]);
         
         // inf + x = inf
         operand_a[0] = DP_INF;
         operand_b[0] = DP_ONE;
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         check_dp_exact("DADD inf + 1.0 = inf", DP_INF, result[0]);
         
         // inf - inf = NaN
         opcode = OP_FSUB;
         operand_a[0] = DP_INF;
         operand_b[0] = DP_INF;
-        #(CLK_PERIOD);
-        test_count++;
-        if (result[0][62:52] == 11'h7FF && result[0][51:0] != 52'h0) begin
-            $display("[PASS] DSUB inf - inf = NaN");
-            pass_count++;
-        end else begin
-            $display("[FAIL] DSUB inf - inf = NaN: Got 0x%016X", result[0]);
-            fail_count++;
-        end
+        issue_and_wait(LATENCY_ADD);
+        check_nan("DSUB inf - inf = NaN", result[0]);
         
         //=====================================================================
-        // Test 9: SIMD - All 8 threads
+        // Test 9: SIMD - All 8 threads (with proper latency)
         //=====================================================================
         $display("\n--- Test: SIMD 8-thread DP Add ---");
+        
+        reset();  // Clean state
         
         opcode = OP_FADD;
         func = FUNC_DP;
@@ -411,7 +446,7 @@ module tb_fpu_dp;
         operand_a[6] = DP_SEVEN; operand_b[6] = DP_ONE;   // 7+1=8
         operand_a[7] = DP_EIGHT; operand_b[7] = DP_TWO;   // 8+2=10
         
-        #(CLK_PERIOD);
+        issue_and_wait(LATENCY_ADD);
         
         check_dp_result("Thread 0: 1.0 + 1.0 = 2.0", DP_TWO, result[0]);
         check_dp_result("Thread 1: 2.0 + 1.0 = 3.0", DP_THREE, result[1]);

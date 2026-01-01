@@ -3,7 +3,7 @@
 //=============================================================================
 // File:        fpu.sv
 // Description: 8-wide SIMD FPU supporting IEEE 754 single and double precision
-//              floating-point operations.
+//              floating-point operations with realistic pipeline latencies.
 // Features:
 //   - Single precision (32-bit) operations
 //   - Double precision (64-bit) operations  
@@ -12,15 +12,31 @@
 //   - Int<->Float conversions
 //   - Fused multiply-add (FMA)
 //   - Configurable rounding modes
-// Version:     1.0
-// Date:        December 22, 2025
+//   - Pipelined execution with operation-specific latencies:
+//       * Simple ops (MIN/MAX/ABS/NEG/CMP): 1 cycle
+//       * FADD/FSUB: 3 cycles
+//       * FMUL: 4 cycles  
+//       * FMADD: 5 cycles
+//       * FDIV/FSQRT/FRCP/FRSQRT: 12 cycles (iterative)
+// Version:     2.0
+// Date:        January 1, 2026
 //=============================================================================
 
 `include "gpgpu_defines.svh"
 
 module fpu
     import gpgpu_pkg::*;
-(
+#(
+    // Pipeline latencies (in cycles)
+    parameter int LATENCY_SIMPLE = 1,   // MIN, MAX, ABS, NEG, CMP
+    parameter int LATENCY_ADD    = 3,   // FADD, FSUB
+    parameter int LATENCY_MUL    = 4,   // FMUL
+    parameter int LATENCY_FMA    = 5,   // FMADD, FMSUB, FNMADD, FNMSUB
+    parameter int LATENCY_DIV    = 12,  // FDIV, FRCP
+    parameter int LATENCY_SQRT   = 12,  // FSQRT, FRSQRT
+    parameter int LATENCY_CVT    = 2,   // FCVT
+    parameter int MAX_LATENCY    = 12   // Maximum of all latencies
+)(
     input  logic                                    clk,
     input  logic                                    rst_n,
     
@@ -43,11 +59,35 @@ module fpu
 );
 
     //=========================================================================
-    // Pipeline Registers
+    // Operation Latency Selection
     //=========================================================================
     
-    // For now, implement combinational FPU (single-cycle for simple ops)
-    // Can be pipelined later for better timing
+    logic [3:0] op_latency;
+    
+    always_comb begin
+        case (opcode)
+            OP_FMIN, OP_FMAX, OP_FABS, OP_FNEG, OP_FCMP:
+                op_latency = LATENCY_SIMPLE[3:0];
+            OP_FADD, OP_FSUB:
+                op_latency = LATENCY_ADD[3:0];
+            OP_FMUL:
+                op_latency = LATENCY_MUL[3:0];
+            OP_FMADD:
+                op_latency = LATENCY_FMA[3:0];
+            OP_FDIV, OP_FRCP:
+                op_latency = LATENCY_DIV[3:0];
+            OP_FSQRT, OP_FRSQRT:
+                op_latency = LATENCY_SQRT[3:0];
+            OP_FCVT:
+                op_latency = LATENCY_CVT[3:0];
+            default:
+                op_latency = LATENCY_SIMPLE[3:0];
+        endcase
+    end
+    
+    //=========================================================================
+    // Combinational Results from FPU Lanes
+    //=========================================================================
     
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] result_comb;
     logic [WARP_SIZE-1:0]                 pred_comb;
@@ -75,14 +115,81 @@ module fpu
     endgenerate
     
     //=========================================================================
-    // Output Assignment
+    // Pipeline Shift Registers with Countdown
     //=========================================================================
     
-    // Simple single-cycle implementation for now
-    assign result      = result_comb;
-    assign pred_result = pred_comb;
-    assign valid_out   = valid_in;
-    assign ready       = 1'b1;  // Always ready (combinational)
+    // Result pipeline stages
+    logic [MAX_LATENCY-1:0][WARP_SIZE-1:0][DATA_WIDTH-1:0] result_pipe;
+    logic [MAX_LATENCY-1:0][WARP_SIZE-1:0]                 pred_pipe;
+    logic [MAX_LATENCY-1:0]                                valid_pipe;
+    logic [MAX_LATENCY-1:0][3:0]                           cycles_remaining;
+    logic [MAX_LATENCY-1:0]                                output_consumed;
+    
+    // Track which pipeline stage has output ready
+    logic [MAX_LATENCY-1:0] stage_output_ready;
+    
+    // Each stage outputs when its countdown reaches 0 and hasn't been consumed
+    always_comb begin
+        for (int i = 0; i < MAX_LATENCY; i++) begin
+            stage_output_ready[i] = valid_pipe[i] && (cycles_remaining[i] == 0) && !output_consumed[i];
+        end
+    end
+    
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int i = 0; i < MAX_LATENCY; i++) begin
+                result_pipe[i]       <= '0;
+                pred_pipe[i]         <= '0;
+                valid_pipe[i]        <= 1'b0;
+                cycles_remaining[i]  <= '0;
+                output_consumed[i]   <= 1'b0;
+            end
+        end else begin
+            // Stage 0: capture input, countdown starts at latency-1
+            result_pipe[0]      <= result_comb;
+            pred_pipe[0]        <= pred_comb;
+            valid_pipe[0]       <= valid_in;
+            cycles_remaining[0] <= (op_latency > 0) ? (op_latency - 4'd1) : 4'd0;
+            output_consumed[0]  <= 1'b0;  // New entry, not consumed yet
+            
+            // Stages 1+: shift through pipeline and decrement countdown
+            for (int i = 1; i < MAX_LATENCY; i++) begin
+                result_pipe[i]  <= result_pipe[i-1];
+                pred_pipe[i]    <= pred_pipe[i-1];
+                valid_pipe[i]   <= valid_pipe[i-1];
+                // Decrement countdown (saturate at 0)
+                cycles_remaining[i] <= (cycles_remaining[i-1] > 0) ? 
+                                       (cycles_remaining[i-1] - 4'd1) : 4'd0;
+                // Shift consumed flag with entry, OR mark consumed if entry output at stage i-1
+                // stage_output_ready[i-1] is computed from OLD values (before clock edge)
+                output_consumed[i] <= output_consumed[i-1] || stage_output_ready[i-1];
+            end
+        end
+    end
+    
+    // Priority encoder to select earliest ready output
+    always_comb begin
+        result      = '0;
+        pred_result = '0;
+        valid_out   = 1'b0;
+        
+        for (int i = 0; i < MAX_LATENCY; i++) begin
+            if (stage_output_ready[i]) begin
+                result      = result_pipe[i];
+                pred_result = pred_pipe[i];
+                valid_out   = 1'b1;
+                break;
+            end
+        end
+    end
+    
+    //=========================================================================
+    // Ready Signal
+    //=========================================================================
+    
+    // FPU is always ready to accept new operations (fully pipelined)
+    // In a more complex implementation, this could be gated for div/sqrt
+    assign ready = 1'b1;
 
 endmodule
 

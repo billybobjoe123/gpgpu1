@@ -246,6 +246,25 @@ module gpu_core
     logic                           scoreboard_clear_warp;
     logic [WARP_ID_WIDTH-1:0]       scoreboard_clear_warp_id;
     
+    //=========================================================================
+    // Internal Signals - Forwarding Network
+    //=========================================================================
+    
+    // Forwarded operand data
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] fwd_rs1_data;
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] fwd_rs2_data;
+    
+    // Forwarding status (for performance monitoring)
+    logic                           fwd_rs1_from_e2m;
+    logic                           fwd_rs1_from_m2w;
+    logic                           fwd_rs1_from_wb;
+    logic                           fwd_rs2_from_e2m;
+    logic                           fwd_rs2_from_m2w;
+    logic                           fwd_rs2_from_wb;
+    
+    // Load-use stall (can't forward from memory op in E2M)
+    logic                           fwd_stall_required;
+    
     // Stall signals
     logic                           stall_fetch;
     logic                           stall_decode;
@@ -322,13 +341,23 @@ module gpu_core
     // Stall Logic
     //=========================================================================
     
-    // Data hazard stall - stall decode stage if RAW hazard detected
+    // Data hazard stall - stall decode stage if RAW hazard detected (without forwarding)
+    // Forwarding stall - stall operand stage if load-use hazard (can't forward from memory op)
     logic stall_hazard;
-    assign stall_hazard = scoreboard_hazard_detected;
+    assign stall_hazard = scoreboard_hazard_detected && !fwd_can_bypass_hazard;
+    
+    // Forwarding can bypass scoreboard hazard if data is available from E2M/M2W/WB
+    logic fwd_can_bypass_hazard;
+    logic fwd_can_bypass_rs1, fwd_can_bypass_rs2;
+    assign fwd_can_bypass_rs1 = !decoded_raw.rs1_en || 
+                                 fwd_rs1_from_e2m || fwd_rs1_from_m2w || fwd_rs1_from_wb;
+    assign fwd_can_bypass_rs2 = !decoded_raw.rs2_en || decoded_raw.imm_en ||
+                                 fwd_rs2_from_e2m || fwd_rs2_from_m2w || fwd_rs2_from_wb;
+    assign fwd_can_bypass_hazard = fwd_can_bypass_rs1 && fwd_can_bypass_rs2;
     
     assign stall_fetch     = !fetch_decode_ready;
     assign stall_decode    = !decode_operand_ready || stall_hazard;
-    assign stall_operand   = !operand_exec_ready;
+    assign stall_operand   = !operand_exec_ready || fwd_stall_required;
     assign stall_execute   = !exec_mem_ready;
     assign stall_memory    = !lsu_req_ready;
     assign stall_writeback = 1'b0;  // Writeback never stalls
@@ -645,6 +674,69 @@ module gpu_core
     assign pf_pred_a = pf_pred_data;
     
     //=========================================================================
+    // Forwarding Network Instance
+    //=========================================================================
+    
+    forwarding_network #(
+        .NUM_WARPS(NUM_WARPS)
+    ) u_forwarding_network (
+        .clk                (clk),
+        .rst_n              (rst_n),
+        
+        // Operand fetch stage
+        .operand_valid      (d2o_valid),
+        .operand_warp_id    (d2o_warp_id),
+        .operand_rs1        (d2o_decoded.rs1),
+        .operand_rs2        (d2o_decoded.rs2),
+        .operand_rs1_en     (d2o_decoded.rs1_en),
+        .operand_rs2_en     (d2o_decoded.rs2_en && !d2o_decoded.imm_en),
+        
+        // Register file data
+        .rf_rs1_data        (rf_rs1_data),
+        .rf_rs2_data        (rf_rs2_data),
+        
+        // E2M forwarding source
+        .e2m_valid          (e2m_valid),
+        .e2m_warp_id        (e2m_warp_id),
+        .e2m_rd             (e2m_decoded.rd),
+        .e2m_rd_en          (e2m_decoded.rd_en),
+        .e2m_mask           (e2m_mask),
+        .e2m_result         (e2m_result),
+        .e2m_is_mem         (e2m_is_mem),
+        
+        // M2W forwarding source
+        .m2w_valid          (m2w_valid),
+        .m2w_warp_id        (m2w_warp_id),
+        .m2w_rd             (m2w_rd),
+        .m2w_rd_en          (m2w_rd_en),
+        .m2w_mask           (m2w_mask),
+        .m2w_data           (m2w_data),
+        
+        // WB forwarding source (same as m2w, being written this cycle)
+        .wb_valid           (wb_rf_en),
+        .wb_warp_id         (wb_rf_warp_id),
+        .wb_rd              (wb_rf_addr),
+        .wb_rd_en           (wb_rf_en),
+        .wb_mask            (wb_rf_mask),
+        .wb_data            (wb_rf_data),
+        
+        // Forwarded data output
+        .fwd_rs1_data       (fwd_rs1_data),
+        .fwd_rs2_data       (fwd_rs2_data),
+        
+        // Forwarding status
+        .fwd_rs1_from_e2m   (fwd_rs1_from_e2m),
+        .fwd_rs1_from_m2w   (fwd_rs1_from_m2w),
+        .fwd_rs1_from_wb    (fwd_rs1_from_wb),
+        .fwd_rs2_from_e2m   (fwd_rs2_from_e2m),
+        .fwd_rs2_from_m2w   (fwd_rs2_from_m2w),
+        .fwd_rs2_from_wb    (fwd_rs2_from_wb),
+        
+        // Load-use stall
+        .fwd_stall_required (fwd_stall_required)
+    );
+    
+    //=========================================================================
     // Operand -> Execute Pipeline Register
     //=========================================================================
     
@@ -660,29 +752,34 @@ module gpu_core
             o2e_pred_data <= '0;
         end else if (warp_flush[d2o_warp_id]) begin
             o2e_valid <= 1'b0;
-        end else if (!stall_execute) begin
+        end else if (!stall_execute && !stall_operand) begin
             o2e_valid     <= d2o_valid;
             o2e_decoded   <= d2o_decoded;
             o2e_pc        <= d2o_pc;
             o2e_warp_id   <= d2o_warp_id;
             o2e_mask      <= d2o_mask;
             
-            // Operand selection: immediate or register
+            // Operand selection: use forwarded data with immediate override
             if (d2o_decoded.imm_en) begin
                 // Use immediate for operand B
                 for (int t = 0; t < WARP_SIZE; t++) begin
                     o2e_rs2_data[t] <= d2o_decoded.imm;
                 end
             end else begin
-                o2e_rs2_data <= rf_rs2_data;
+                // Use forwarded RS2 data (forwarding network handles muxing)
+                o2e_rs2_data <= fwd_rs2_data;
             end
             
-            o2e_rs1_data  <= rf_rs1_data;
+            // Use forwarded RS1 data (forwarding network handles muxing)
+            o2e_rs1_data  <= fwd_rs1_data;
             o2e_pred_data <= pf_pred_data;
+        end else if (stall_operand && !stall_execute) begin
+            // Clear valid if operand stage is stalled but execute stage can accept
+            o2e_valid <= 1'b0;
         end
     end
     
-    assign operand_exec_ready = !stall_execute;
+    assign operand_exec_ready = !stall_execute && !stall_operand;
     
     //=========================================================================
     // Execution Unit Instance
