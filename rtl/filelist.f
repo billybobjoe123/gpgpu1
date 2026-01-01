@@ -10,7 +10,10 @@ rtl/common/gpgpu_interfaces.sv
 rtl/core/decoder.sv
 rtl/core/register_file.sv
 rtl/core/alu.sv
+rtl/core/fpu.sv
+rtl/core/fpu_dp.sv
 rtl/core/warp_scheduler.sv
+rtl/core/warp_shuffle.sv
 rtl/core/lsu.sv
 rtl/core/fetch_unit.sv
 rtl/core/gpu_core.sv

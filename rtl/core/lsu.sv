@@ -55,6 +55,144 @@ module address_gen_unit
 endmodule
 
 //=============================================================================
+// Atomic ALU
+//=============================================================================
+// Performs the read-modify-write compute operation for atomic instructions
+
+module atomic_alu
+    import gpgpu_pkg::*;
+(
+    input  logic [DATA_WIDTH-1:0]  mem_data,      // Original data from memory
+    input  logic [DATA_WIDTH-1:0]  operand,       // Operand from register (RS2)
+    input  logic [DATA_WIDTH-1:0]  compare_val,   // Compare value for CAS (from RD)
+    input  atom_func_t             atom_func,     // Atomic function type
+    input  logic                   is_64bit,      // 64-bit or 32-bit operation
+    
+    output logic [DATA_WIDTH-1:0]  result,        // New value to write to memory
+    output logic [DATA_WIDTH-1:0]  return_val     // Old value to return to register
+);
+
+    // 32-bit operands (zero-extended from lower 32 bits)
+    logic [31:0] mem_data_32, operand_32, compare_32;
+    logic [31:0] result_32;
+    
+    assign mem_data_32 = mem_data[31:0];
+    assign operand_32 = operand[31:0];
+    assign compare_32 = compare_val[31:0];
+    
+    // Return old memory value regardless of operation
+    assign return_val = mem_data;
+    
+    // Compute new value based on atomic function
+    always_comb begin
+        result = mem_data;  // Default: no change
+        result_32 = mem_data_32;
+        
+        case (atom_func)
+            ATOM_ADD: begin
+                if (is_64bit) begin
+                    result = mem_data + operand;
+                end else begin
+                    result_32 = mem_data_32 + operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_MIN: begin
+                // Signed minimum
+                if (is_64bit) begin
+                    result = ($signed(mem_data) < $signed(operand)) ? mem_data : operand;
+                end else begin
+                    result_32 = ($signed(mem_data_32) < $signed(operand_32)) ? mem_data_32 : operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_MAX: begin
+                // Signed maximum
+                if (is_64bit) begin
+                    result = ($signed(mem_data) > $signed(operand)) ? mem_data : operand;
+                end else begin
+                    result_32 = ($signed(mem_data_32) > $signed(operand_32)) ? mem_data_32 : operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_MINU: begin
+                // Unsigned minimum
+                if (is_64bit) begin
+                    result = (mem_data < operand) ? mem_data : operand;
+                end else begin
+                    result_32 = (mem_data_32 < operand_32) ? mem_data_32 : operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_MAXU: begin
+                // Unsigned maximum
+                if (is_64bit) begin
+                    result = (mem_data > operand) ? mem_data : operand;
+                end else begin
+                    result_32 = (mem_data_32 > operand_32) ? mem_data_32 : operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_AND: begin
+                if (is_64bit) begin
+                    result = mem_data & operand;
+                end else begin
+                    result_32 = mem_data_32 & operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_OR: begin
+                if (is_64bit) begin
+                    result = mem_data | operand;
+                end else begin
+                    result_32 = mem_data_32 | operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_XOR: begin
+                if (is_64bit) begin
+                    result = mem_data ^ operand;
+                end else begin
+                    result_32 = mem_data_32 ^ operand_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            ATOM_EXCH: begin
+                // Exchange: write operand, return old value
+                if (is_64bit) begin
+                    result = operand;
+                end else begin
+                    result = {32'b0, operand_32};
+                end
+            end
+            
+            ATOM_CAS: begin
+                // Compare-and-swap: if mem == compare, write operand
+                if (is_64bit) begin
+                    result = (mem_data == compare_val) ? operand : mem_data;
+                end else begin
+                    result_32 = (mem_data_32 == compare_32) ? operand_32 : mem_data_32;
+                    result = {32'b0, result_32};
+                end
+            end
+            
+            default: begin
+                result = mem_data;
+            end
+        endcase
+    end
+
+endmodule
+
+//=============================================================================
 // Memory Coalescing Unit
 //=============================================================================
 // Coalesces memory requests from multiple threads into fewer transactions
@@ -449,6 +587,7 @@ module lsu
     input  logic [NUM_THREADS-1:0]                    req_active_mask,
     input  logic [NUM_THREADS-1:0]                    req_pred_mask,
     input  opcode_t                                   req_opcode,
+    input  logic [7:0]                                req_func,        // Function code for atomics
     input  logic [REG_ADDR_WIDTH-1:0]                 req_rd,
     input  logic [NUM_THREADS-1:0][ADDR_WIDTH-1:0]    req_base_addr,
     input  logic signed [12:0]                        req_offset,
@@ -489,17 +628,20 @@ module lsu
     // Decode memory operation type
     //=========================================================================
     
-    logic is_load, is_store;
+    logic is_load, is_store, is_atomic;
     logic is_global, is_shared;
     logic is_64bit, is_signed;
+    atom_func_t atom_func;
     
     always_comb begin
         is_load = 1'b0;
         is_store = 1'b0;
+        is_atomic = 1'b0;
         is_global = 1'b0;
         is_shared = 1'b0;
         is_64bit = 1'b0;
         is_signed = 1'b0;
+        atom_func = ATOM_ADD;
         
         case (req_opcode)
             OP_LD: begin
@@ -549,6 +691,34 @@ module lsu
                 is_shared = 1'b1;
                 is_64bit = 1'b0;
             end
+            // Atomic operations - global memory, 32-bit
+            OP_ATOM: begin
+                is_atomic = 1'b1;
+                is_global = 1'b1;
+                is_64bit = 1'b0;
+                atom_func = atom_func_t'(req_func[3:0]);
+            end
+            // Atomic operations - shared memory, 32-bit
+            OP_ATOMS: begin
+                is_atomic = 1'b1;
+                is_shared = 1'b1;
+                is_64bit = 1'b0;
+                atom_func = atom_func_t'(req_func[3:0]);
+            end
+            // Atomic operations - global memory, 64-bit
+            OP_ATOM64: begin
+                is_atomic = 1'b1;
+                is_global = 1'b1;
+                is_64bit = 1'b1;
+                atom_func = atom_func_t'(req_func[3:0]);
+            end
+            // Atomic operations - shared memory, 64-bit
+            OP_ATOMS64: begin
+                is_atomic = 1'b1;
+                is_shared = 1'b1;
+                is_64bit = 1'b1;
+                atom_func = atom_func_t'(req_func[3:0]);
+            end
             default: begin
                 // Not a memory operation
             end
@@ -577,12 +747,16 @@ module lsu
     // State Machine
     //=========================================================================
     
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         LSU_IDLE,
         LSU_GLOBAL_ACCESS,
         LSU_SHARED_ACCESS,
         LSU_WAIT_GLOBAL,
         LSU_WAIT_SHARED,
+        LSU_ATOMIC_READ,      // Read phase of atomic RMW
+        LSU_ATOMIC_WAIT_READ, // Wait for read response
+        LSU_ATOMIC_WRITE,     // Write phase of atomic RMW
+        LSU_ATOMIC_WAIT_WRITE,// Wait for write complete
         LSU_COMPLETE
     } lsu_state_t;
     
@@ -594,8 +768,15 @@ module lsu
     logic [NUM_THREADS-1:0] exec_mask_r;
     logic [NUM_THREADS-1:0][ADDR_WIDTH-1:0] eff_addr_r;
     logic [NUM_THREADS-1:0][DATA_WIDTH-1:0] store_data_r;
-    logic is_load_r, is_store_r, is_global_r, is_shared_r;
+    logic [NUM_THREADS-1:0][DATA_WIDTH-1:0] compare_data_r;  // For CAS: compare value from RD
+    logic is_load_r, is_store_r, is_atomic_r, is_global_r, is_shared_r;
     logic is_64bit_r, is_signed_r;
+    atom_func_t atom_func_r;
+    
+    // Atomic ALU signals
+    logic [DATA_WIDTH-1:0] atomic_mem_data;
+    logic [DATA_WIDTH-1:0] atomic_new_value;
+    logic [DATA_WIDTH-1:0] atomic_old_value;
     
     // Result data
     logic [NUM_THREADS-1:0][DATA_WIDTH-1:0] result_data_r;
@@ -638,36 +819,45 @@ module lsu
             exec_mask_r <= '0;
             eff_addr_r <= '0;
             store_data_r <= '0;
+            compare_data_r <= '0;
             is_load_r <= 1'b0;
             is_store_r <= 1'b0;
+            is_atomic_r <= 1'b0;
             is_global_r <= 1'b0;
             is_shared_r <= 1'b0;
             is_64bit_r <= 1'b0;
             is_signed_r <= 1'b0;
+            atom_func_r <= ATOM_ADD;
             result_data_r <= '0;
             result_mask_r <= '0;
             thread_idx <= '0;
         end else begin
             case (state)
                 LSU_IDLE: begin
-                    if (req_valid && (is_load || is_store)) begin
+                    if (req_valid && (is_load || is_store || is_atomic)) begin
                         // Latch request
                         warp_id_r <= req_warp_id;
                         rd_r <= req_rd;
                         exec_mask_r <= exec_mask;
                         eff_addr_r <= eff_addr;
                         store_data_r <= req_store_data;
+                        compare_data_r <= req_store_data;  // For CAS, compare value
                         is_load_r <= is_load;
                         is_store_r <= is_store;
+                        is_atomic_r <= is_atomic;
                         is_global_r <= is_global;
                         is_shared_r <= is_shared;
                         is_64bit_r <= is_64bit;
                         is_signed_r <= is_signed;
+                        atom_func_r <= atom_func;
                         result_data_r <= '0;
                         result_mask_r <= '0;
                         thread_idx <= '0;
                         
-                        if (is_global) begin
+                        if (is_atomic) begin
+                            // Atomic operations go to read phase first
+                            state <= LSU_ATOMIC_READ;
+                        end else if (is_global) begin
                             state <= LSU_GLOBAL_ACCESS;
                         end else begin
                             state <= LSU_SHARED_ACCESS;
@@ -743,6 +933,56 @@ module lsu
                     end
                 end
                 
+                //=============================================================
+                // Atomic operation states (serialized read-modify-write)
+                //=============================================================
+                
+                LSU_ATOMIC_READ: begin
+                    // Issue read to memory for current thread
+                    if (!exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]]) begin
+                        // Skip inactive thread
+                        if (thread_idx >= NUM_THREADS - 1) begin
+                            state <= LSU_COMPLETE;
+                        end else begin
+                            thread_idx <= thread_idx + 1;
+                        end
+                    end else if (gmem_req_ready) begin
+                        state <= LSU_ATOMIC_WAIT_READ;
+                    end
+                end
+                
+                LSU_ATOMIC_WAIT_READ: begin
+                    if (gmem_resp_valid) begin
+                        // Store old value for return
+                        if (is_64bit_r) begin
+                            result_data_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= gmem_resp_rdata;
+                        end else begin
+                            result_data_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= gmem_data_extended;
+                        end
+                        result_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= 1'b1;
+                        // Proceed to write phase
+                        state <= LSU_ATOMIC_WRITE;
+                    end
+                end
+                
+                LSU_ATOMIC_WRITE: begin
+                    // Write new value to memory
+                    if (gmem_req_ready) begin
+                        state <= LSU_ATOMIC_WAIT_WRITE;
+                    end
+                end
+                
+                LSU_ATOMIC_WAIT_WRITE: begin
+                    // For stores, we assume completion when ready was asserted
+                    // Move to next thread or complete
+                    thread_idx <= thread_idx + 1;
+                    if (thread_idx >= NUM_THREADS - 1) begin
+                        state <= LSU_COMPLETE;
+                    end else begin
+                        state <= LSU_ATOMIC_READ;
+                    end
+                end
+                
                 LSU_COMPLETE: begin
                     if (resp_ready || is_store_r) begin
                         state <= LSU_IDLE;
@@ -776,17 +1016,48 @@ module lsu
     end
     
     //=========================================================================
+    // Atomic ALU Instance
+    //=========================================================================
+    
+    atomic_alu atomic_alu_inst (
+        .mem_data(atomic_mem_data),
+        .operand(store_data_r[thread_idx[THREAD_ID_WIDTH-1:0]]),
+        .compare_val(compare_data_r[thread_idx[THREAD_ID_WIDTH-1:0]]),
+        .atom_func(atom_func_r),
+        .is_64bit(is_64bit_r),
+        .result(atomic_new_value),
+        .return_val(atomic_old_value)
+    );
+    
+    // Atomic memory data comes from global memory response
+    assign atomic_mem_data = gmem_resp_rdata;
+    
+    //=========================================================================
     // Output Generation
     //=========================================================================
     
     // Request ready when idle
     assign req_ready = (state == LSU_IDLE);
     
-    // Global memory interface
-    assign gmem_req_valid = (state == LSU_GLOBAL_ACCESS) && exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]];
-    assign gmem_req_we = is_store_r;
+    // Global memory interface - includes atomic operations
+    logic gmem_valid_load_store, gmem_valid_atomic;
+    assign gmem_valid_load_store = (state == LSU_GLOBAL_ACCESS) && exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]];
+    assign gmem_valid_atomic = ((state == LSU_ATOMIC_READ) || (state == LSU_ATOMIC_WRITE)) && 
+                               exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]];
+    
+    assign gmem_req_valid = gmem_valid_load_store || gmem_valid_atomic;
+    assign gmem_req_we = is_store_r || (state == LSU_ATOMIC_WRITE);
     assign gmem_req_addr = eff_addr_r[thread_idx[THREAD_ID_WIDTH-1:0]];
-    assign gmem_req_wdata = store_data_r[thread_idx[THREAD_ID_WIDTH-1:0]];
+    
+    // Write data: for atomics in write phase, use computed new value
+    always_comb begin
+        if (is_atomic_r && (state == LSU_ATOMIC_WRITE)) begin
+            gmem_req_wdata = atomic_new_value;
+        end else begin
+            gmem_req_wdata = store_data_r[thread_idx[THREAD_ID_WIDTH-1:0]];
+        end
+    end
+    
     assign gmem_req_wstrb = is_64bit_r ? 8'hFF : 8'h0F;
     
     // Shared memory interface
@@ -802,8 +1073,8 @@ module lsu
         end
     end
     
-    // Response interface
-    assign resp_valid = (state == LSU_COMPLETE) && is_load_r;
+    // Response interface - atomics also return old value to register
+    assign resp_valid = (state == LSU_COMPLETE) && (is_load_r || is_atomic_r);
     assign resp_warp_id = warp_id_r;
     assign resp_rd = rd_r;
     assign resp_mask = result_mask_r;

@@ -766,6 +766,7 @@ module gpu_core
         .req_active_mask (e2m_mask),
         .req_pred_mask   ({WARP_SIZE{1'b1}}),  // Already applied
         .req_opcode      (e2m_decoded.opcode),
+        .req_func        (e2m_decoded.func),   // Function code for atomics
         .req_rd          (e2m_decoded.rd),
         .req_base_addr   (e2m_result),  // Address calculated in execute
         .req_offset      (13'b0),  // Offset already applied

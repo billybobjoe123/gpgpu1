@@ -369,10 +369,11 @@ module tb_decoder;
         end
         
         //---------------------------------------------------------------------
-        // Test 19: Illegal instruction (reserved opcode 0x20)
+        // Test 19: Illegal instruction (reserved opcode 0x2E)
+        // Note: Opcodes 0x20-0x2D are valid FP opcodes, 0x2E+ are reserved
         //---------------------------------------------------------------------
-        $display("Test 19: Illegal instruction (opcode 0x20)");
-        instr = {6'b100000, 26'd0};
+        $display("Test 19: Illegal instruction (opcode 0x2E)");
+        instr = {6'b101110, 26'd0};  // Opcode 0x2E (truly reserved)
         instr_valid = 1'b1;
         #1;
         if (!illegal_instr) begin

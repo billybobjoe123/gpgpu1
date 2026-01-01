@@ -121,10 +121,20 @@ package gpgpu_pkg;
         OP_FCMP     = 6'b101010,  // 0x2A: FP Compare
         OP_FCVT     = 6'b101011,  // 0x2B: FP Convert (int<->float, float<->double)
         OP_FRCP     = 6'b101100,  // 0x2C: FP Reciprocal (approx)
-        OP_FRSQRT   = 6'b101101   // 0x2D: FP Reciprocal Square Root (approx)
+        OP_FRSQRT   = 6'b101101,  // 0x2D: FP Reciprocal Square Root (approx)
         
         // 0x2E-0x2F: Reserved for future FP extensions
-        // 0x30-0x3F: Reserved for future extensions
+        
+        // Atomic Operations (0x30-0x33)
+        OP_ATOM     = 6'b110000,  // 0x30: Atomic operation (global memory)
+        OP_ATOMS    = 6'b110001,  // 0x31: Atomic operation (shared memory)
+        OP_ATOM64   = 6'b110010,  // 0x32: 64-bit atomic operation (global)
+        OP_ATOMS64  = 6'b110011,  // 0x33: 64-bit atomic operation (shared)
+        
+        // Warp Shuffle Operations (0x34)
+        OP_SHFL     = 6'b110100   // 0x34: Warp shuffle operations
+        
+        // 0x35-0x3F: Reserved for future extensions
     } opcode_t;
     
     //=========================================================================
@@ -175,6 +185,23 @@ package gpgpu_pkg;
         MUL_REM     = 8'h06,  // RD = RS1 % RS2 signed
         MUL_REMU    = 8'h07   // RD = RS1 % RS2 unsigned
     } mul_func_t;
+    
+    //=========================================================================
+    // Atomic Function Codes (8 bits, Opcode 0x30-0x33)
+    //=========================================================================
+    
+    typedef enum logic [FUNC_WIDTH-1:0] {
+        ATOM_ADD    = 8'h00,  // *addr = *addr + data; return old
+        ATOM_MIN    = 8'h01,  // *addr = min(*addr, data); return old (signed)
+        ATOM_MAX    = 8'h02,  // *addr = max(*addr, data); return old (signed)
+        ATOM_MINU   = 8'h03,  // *addr = min(*addr, data); return old (unsigned)
+        ATOM_MAXU   = 8'h04,  // *addr = max(*addr, data); return old (unsigned)
+        ATOM_AND    = 8'h05,  // *addr = *addr & data; return old
+        ATOM_OR     = 8'h06,  // *addr = *addr | data; return old
+        ATOM_XOR    = 8'h07,  // *addr = *addr ^ data; return old
+        ATOM_EXCH   = 8'h08,  // *addr = data; return old
+        ATOM_CAS    = 8'h09   // if (*addr == compare) *addr = data; return old
+    } atom_func_t;
     
     //=========================================================================
     // Shift Function Codes (8 bits, Opcode 0x04)
@@ -293,6 +320,21 @@ package gpgpu_pkg;
     } vote_func_t;
     
     //=========================================================================
+    // Shuffle Function Codes (3 bits in FUNC field, Opcode 0x34)
+    // Format: RD = shuffle(RS1, lane_selector, width)
+    //=========================================================================
+    
+    typedef enum logic [2:0] {
+        SHFL_IDX    = 3'b000,  // RD[lane] = RS1[RS2 % width] - direct index shuffle
+        SHFL_UP     = 3'b001,  // RD[lane] = RS1[lane - delta] - shift up (lower lanes)
+        SHFL_DOWN   = 3'b010,  // RD[lane] = RS1[lane + delta] - shift down (higher lanes)
+        SHFL_BFLY   = 3'b011,  // RD[lane] = RS1[lane ^ mask] - butterfly (XOR) shuffle
+        SHFL_CLAMP  = 3'b100,  // RD[lane] = RS1[clamp(lane-delta, 0)] - clamped up
+        SHFL_WRAP   = 3'b101   // RD[lane] = RS1[(lane + delta) % width] - wrapped
+        // 3'b110, 3'b111 reserved
+    } shfl_func_t;
+    
+    //=========================================================================
     // Special Register IDs (4 bits)
     //=========================================================================
     
@@ -331,10 +373,12 @@ package gpgpu_pkg;
     typedef enum logic [2:0] {
         MEM_NONE      = 3'b000,
         MEM_LOAD_64   = 3'b001,
-        MEM_LOAD_32U  = 3'b010,
-        MEM_LOAD_32S  = 3'b011,
+        MEM_LOAD_32U  = 3'b010,  // Zero-extend
+        MEM_LOAD_32S  = 3'b011,  // Sign-extend
         MEM_STORE_64  = 3'b100,
-        MEM_STORE_32  = 3'b101
+        MEM_STORE_32  = 3'b101,
+        MEM_ATOMIC_32 = 3'b110,  // 32-bit atomic read-modify-write
+        MEM_ATOMIC_64 = 3'b111   // 64-bit atomic read-modify-write
     } mem_access_t;
     
     typedef enum logic [1:0] {
@@ -356,7 +400,8 @@ package gpgpu_pkg;
         EX_BRANCH   = 4'b0101,
         EX_LSU      = 4'b0110,
         EX_SPECIAL  = 4'b0111,
-        EX_FPU      = 4'b1000   // Floating-Point Unit
+        EX_FPU      = 4'b1000,  // Floating-Point Unit
+        EX_SHFL     = 4'b1001   // Warp Shuffle Unit
     } exec_unit_t;
     
     //=========================================================================
@@ -407,6 +452,12 @@ package gpgpu_pkg;
         logic                       is_pop;
         logic                       is_else;
         logic                       is_barrier;
+        
+        // Atomic operations
+        logic                       is_atomic;   // Atomic memory operation
+        
+        // Warp shuffle
+        logic                       is_shuffle;  // Warp shuffle operation
         
         // Valid instruction
         logic                       valid;

@@ -75,6 +75,7 @@ module tb_warp_scheduler;
     
     // Scheduler outputs
     logic                            sched_valid;
+    logic                            sched_ready;  // Handshake from fetch unit
     logic [WARP_ID_WIDTH-1:0]        sched_warp_id;
     logic [ADDR_WIDTH-1:0]           sched_pc;
     logic [WARP_SIZE-1:0]            sched_active_mask;
@@ -148,6 +149,7 @@ module tb_warp_scheduler;
         .barrier_release    (barrier_release),
         .barrier_release_id (barrier_release_id),
         .sched_valid        (sched_valid),
+        .sched_ready        (sched_ready),
         .sched_warp_id      (sched_warp_id),
         .sched_pc           (sched_pc),
         .sched_active_mask  (sched_active_mask),
@@ -203,6 +205,43 @@ module tb_warp_scheduler;
     always #(CLK_PERIOD/2) clk = ~clk;
     
     //=========================================================================
+    // Simulated Fetch Unit - Auto PC Update
+    //=========================================================================
+    // The scheduler marks warps in-flight when scheduled. The fetch unit
+    // is responsible for sending pc_update when the instruction enters the
+    // pipeline. This block simulates that behavior.
+    
+    logic auto_pc_update_enable;  // Enable automatic PC updates
+    logic [WARP_ID_WIDTH-1:0] last_sched_warp;
+    logic [ADDR_WIDTH-1:0] last_sched_pc;
+    logic last_sched_valid;
+    
+    initial auto_pc_update_enable = 1;  // Enable by default
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            last_sched_valid <= 0;
+            last_sched_warp <= 0;
+            last_sched_pc <= 0;
+            pc_update_valid <= 0;
+        end else if (auto_pc_update_enable) begin
+            // Send PC update for previously scheduled warp (one cycle delay)
+            if (last_sched_valid) begin
+                pc_update_valid <= 1;
+                pc_update_warp_id <= last_sched_warp;
+                pc_update_value <= last_sched_pc + 4;  // PC + 4
+            end else begin
+                pc_update_valid <= 0;
+            end
+            
+            // Capture current scheduling for next cycle
+            last_sched_valid <= sched_valid && sched_ready;
+            last_sched_warp <= sched_warp_id;
+            last_sched_pc <= sched_pc;
+        end
+    end
+    
+    //=========================================================================
     // Test Counters
     //=========================================================================
     
@@ -238,8 +277,8 @@ module tb_warp_scheduler;
         branch_warp_id = 0;
         branch_target_pc = 0;
         
-        // PC update
-        pc_update_valid = 0;
+        // PC update - now handled by auto block, just init warp_id/value
+        // pc_update_valid is driven by auto_pc_update block
         pc_update_warp_id = 0;
         pc_update_value = 0;
         
@@ -258,6 +297,9 @@ module tb_warp_scheduler;
         barrier_id = 0;
         num_warps_in_block = NUM_WARPS;
         reset_barriers = 0;
+        
+        // Scheduler ready signal
+        sched_ready = 1;  // Assume fetch is always ready
         
         // Scoreboard
         sb_check_valid = 0;
@@ -343,13 +385,17 @@ module tb_warp_scheduler;
         check_result("all_warps_done is false", !all_warps_done);
         
         //---------------------------------------------------------------------
-        // Test 3: PC advances automatically
+        // Test 3: PC updates via simulated fetch unit
+        // The auto_pc_update block simulates the fetch unit sending PC+4
+        // updates after each instruction is scheduled.
         //---------------------------------------------------------------------
-        $display("\nTest 3: PC auto-advance");
-        @(posedge clk);  // First scheduling cycle (PC advances to 0x1004)
-        @(posedge clk);  // Need second cycle since scheduler advances PC on valid schedule
+        $display("\nTest 3: PC update from fetch unit");
+        // Warp 0 was scheduled in Test 2. The auto PC update block should
+        // have sent PC update on the next cycle. Wait for it to take effect.
+        repeat(3) @(posedge clk);
         #1;
-        check_result("PC advanced to 0x1004", sched_pc == 64'h1004 || sched_pc == 64'h1008);
+        // Warp 0 should now have PC = 0x1004 (original 0x1000 + 4)
+        check_result("PC advanced to 0x1004", sched_valid && sched_warp_id == 0 && sched_pc == 64'h1004);
         
         //---------------------------------------------------------------------
         // Test 4: Round-robin with multiple warps

@@ -83,6 +83,15 @@ OPCODES = {
     'FCVT':   0x2B,
     'FRCP':   0x2C,
     'FRSQRT': 0x2D,
+    
+    # Atomic Operations (Format L)
+    'ATOM':   0x30,
+    'ATOMS':  0x31,
+    'ATOM64': 0x32,
+    'ATOMS64': 0x33,
+    
+    # Warp Shuffle Operations (Format R)
+    'SHFL':   0x34,
 }
 
 # ALU function codes (opcode 0x00)
@@ -168,6 +177,37 @@ VOTE_FUNCS = {
     'NONE':   0x2,
     'BALLOT': 0x3,
     'POPC':   0x4,
+}
+
+# Atomic function codes
+ATOM_FUNCS = {
+    'ADD':  0x0,
+    'MIN':  0x1,
+    'MAX':  0x2,
+    'MINU': 0x3,
+    'MAXU': 0x4,
+    'AND':  0x5,
+    'OR':   0x6,
+    'XOR':  0x7,
+    'EXCH': 0x8,
+    'CAS':  0x9,
+}
+
+# Shuffle function codes (opcode 0x34)
+SHFL_FUNCS = {
+    'IDX':   0x0,   # Direct index shuffle
+    'UP':    0x1,   # Shift up (from lower lane)
+    'DOWN':  0x2,   # Shift down (from higher lane)
+    'BFLY':  0x3,   # Butterfly (XOR) shuffle
+    'CLAMP': 0x4,   # Clamped up shuffle
+    'WRAP':  0x5,   # Wrapped shuffle
+}
+
+# Shuffle width codes (encoded in func[7:5])
+SHFL_WIDTH = {
+    '8': 0b000,     # Full warp (8 lanes)
+    '2': 0b001,     # 2-lane segments  
+    '4': 0b010,     # 4-lane segments
 }
 
 # Special registers
@@ -682,6 +722,20 @@ class CodeGenerator:
             return self._encode_fmadd(instr)
         
         #---------------------------------------------------------------------
+        # Atomic Operations
+        #---------------------------------------------------------------------
+        # ATOM.func, ATOMS.func, ATOM64.func, ATOMS64.func
+        if mnemonic.startswith('ATOM'):
+            return self._encode_atomic(instr)
+        
+        #---------------------------------------------------------------------
+        # Warp Shuffle Operations
+        #---------------------------------------------------------------------
+        # SHFL.func or SHFL.func.width (e.g., SHFL.IDX, SHFL.BFLY, SHFL.UP.4)
+        if mnemonic.startswith('SHFL'):
+            return self._encode_shuffle(instr)
+        
+        #---------------------------------------------------------------------
         # NOP (pseudo-instruction)
         #---------------------------------------------------------------------
         if mnemonic == 'NOP':
@@ -777,6 +831,87 @@ class CodeGenerator:
         pred = self._get_predicate(instr)
         
         return (opcode << 26) | (rs << 21) | (base << 16) | (pred << 13) | (offset & 0x1FFF)
+    
+    def _encode_atomic(self, instr: Instruction) -> int:
+        """Encode Atomic: opcode(6) | rd(5) | rbase(5) | pred(3) | offset(9) | func(4)
+        
+        Format: ATOM.func RD, offset(RBASE), RS
+        Example: ATOM.ADD R1, 0(R2), R3  - atomically add R3 to memory at R2, return old to R1
+        """
+        mnemonic = instr.mnemonic
+        ops = instr.operands
+        
+        # Parse opcode from mnemonic (ATOM, ATOMS, ATOM64, ATOMS64)
+        parts = mnemonic.split('.')
+        base_op = parts[0]
+        func_name = parts[1] if len(parts) > 1 else 'ADD'
+        
+        if base_op not in OPCODES:
+            raise ValueError(f"Unknown atomic opcode: {base_op}")
+        opcode = OPCODES[base_op]
+        
+        # Parse atomic function
+        if func_name.upper() not in ATOM_FUNCS:
+            raise ValueError(f"Unknown atomic function: {func_name}")
+        func = ATOM_FUNCS[func_name.upper()]
+        
+        # Parse operands: RD, offset(RBASE), RS
+        if len(ops) < 2:
+            raise ValueError("Atomic instruction requires RD, offset(RBASE)[, RS]")
+        
+        rd = self._parse_register(ops[0])
+        offset, base = self._parse_memory_operand(ops[1])
+        rs = self._parse_register(ops[2]) if len(ops) > 2 else 0
+        pred = self._get_predicate(instr)
+        
+        # Offset is 9 bits for atomics (to make room for RS)
+        # Format: opcode(6) | rd(5) | rbase(5) | pred(3) | rs(5) | offset(4) | func(4)
+        # Simplified: use the load format with func in low bits
+        # Format: opcode(6) | rd(5) | rbase(5) | pred(3) | func(4) | offset(9)
+        return (opcode << 26) | (rd << 21) | (base << 16) | (pred << 13) | (func << 9) | (offset & 0x1FF)
+    
+    def _encode_shuffle(self, instr: Instruction) -> int:
+        """Encode Shuffle: opcode(6) | rd(5) | rs1(5) | rs2(5) | pred(3) | width(3) | unused(2) | func(3)
+        
+        Format: SHFL.func[.width] RD, RS1, RS2
+        Example: SHFL.IDX R1, R2, R3     - R1[lane] = R2[R3 % warp_size]
+                 SHFL.BFLY R1, R2, R3    - R1[lane] = R2[lane ^ R3]
+                 SHFL.UP.4 R1, R2, R3    - R1[lane] = R2[lane - R3] in 4-lane segments
+        """
+        mnemonic = instr.mnemonic
+        ops = instr.operands
+        
+        # Parse mnemonic: SHFL.func or SHFL.func.width
+        parts = mnemonic.split('.')
+        if len(parts) < 2:
+            raise ValueError(f"Shuffle instruction requires function: SHFL.func")
+        
+        func_name = parts[1].upper()
+        width_str = parts[2] if len(parts) > 2 else '8'  # Default to full warp
+        
+        # Parse shuffle function
+        if func_name not in SHFL_FUNCS:
+            raise ValueError(f"Unknown shuffle function: {func_name}")
+        func = SHFL_FUNCS[func_name]
+        
+        # Parse width
+        if width_str not in SHFL_WIDTH:
+            raise ValueError(f"Invalid shuffle width: {width_str} (valid: 2, 4, 8)")
+        width = SHFL_WIDTH[width_str]
+        
+        # Parse operands: RD, RS1, RS2
+        if len(ops) != 3:
+            raise ValueError("Shuffle instruction requires 3 operands: RD, RS1, RS2")
+        
+        rd = self._parse_register(ops[0])
+        rs1 = self._parse_register(ops[1])
+        rs2 = self._parse_register(ops[2])
+        pred = self._get_predicate(instr)
+        
+        opcode = OPCODES['SHFL']
+        
+        # Format: opcode(6) | rd(5) | rs1(5) | rs2(5) | pred(3) | width(3) | unused(2) | func(3)
+        return (opcode << 26) | (rd << 21) | (rs1 << 16) | (rs2 << 11) | (pred << 8) | (width << 5) | func
     
     def _encode_branch(self, instr: Instruction, cond: int) -> int:
         """Encode BRA: opcode(6) | pred(3) | cond(3) | offset20(20)"""

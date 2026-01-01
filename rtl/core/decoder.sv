@@ -104,6 +104,14 @@ module decoder
             OP_FRCP, OP_FRSQRT:
                 instr_format = FMT_R;
             
+            // Format L: Atomic memory operations (like loads/stores)
+            OP_ATOM, OP_ATOMS, OP_ATOM64, OP_ATOMS64:
+                instr_format = FMT_L;
+            
+            // Format R: Warp shuffle (uses R-type format)
+            OP_SHFL:
+                instr_format = FMT_R;
+            
             default:
                 instr_format = FMT_R;
         endcase
@@ -216,7 +224,8 @@ module decoder
                 exec_unit = EX_BRANCH;
             
             OP_LD, OP_LD32, OP_LD32S, OP_LDS, OP_LDS32,
-            OP_ST, OP_ST32, OP_STS, OP_STS32:
+            OP_ST, OP_ST32, OP_STS, OP_STS32,
+            OP_ATOM, OP_ATOMS, OP_ATOM64, OP_ATOMS64:
                 exec_unit = EX_LSU;
             
             OP_MOVSR, OP_EXIT, OP_BAR, OP_PUSH, OP_POP, OP_ELSE, OP_VOTE:
@@ -230,6 +239,10 @@ module decoder
             OP_FSQRT, OP_FABS, OP_FNEG, OP_FMADD, OP_FCMP, OP_FCVT,
             OP_FRCP, OP_FRSQRT:
                 exec_unit = EX_FPU;
+            
+            // Warp shuffle operations
+            OP_SHFL:
+                exec_unit = EX_SHFL;
             
             default:
                 exec_unit = EX_NONE;
@@ -250,11 +263,14 @@ module decoder
             OP_LD32S:           mem_access = MEM_LOAD_32S;
             OP_ST, OP_STS:      mem_access = MEM_STORE_64;
             OP_ST32, OP_STS32:  mem_access = MEM_STORE_32;
+            OP_ATOM, OP_ATOMS:  mem_access = MEM_ATOMIC_32;
+            OP_ATOM64, OP_ATOMS64: mem_access = MEM_ATOMIC_64;
             default:            mem_access = MEM_NONE;
         endcase
         
         case (opcode_enum)
             OP_LDS, OP_LDS32, OP_STS, OP_STS32: mem_space = MEM_SPACE_SHARED;
+            OP_ATOMS, OP_ATOMS64:               mem_space = MEM_SPACE_SHARED;
             default:                             mem_space = MEM_SPACE_GLOBAL;
         endcase
     end
@@ -275,13 +291,18 @@ module decoder
             // Instructions that write to RD
             OP_ALU, OP_ALUI, OP_MUL, OP_MULI, OP_SHIFT, OP_SHIFTI,
             OP_LD, OP_LD32, OP_LD32S, OP_LDS, OP_LDS32,
-            OP_MOV, OP_MOVSR, OP_LUI, OP_AUIPC, OP_SEL:
+            OP_MOV, OP_MOVSR, OP_LUI, OP_AUIPC, OP_SEL,
+            OP_ATOM, OP_ATOMS, OP_ATOM64, OP_ATOMS64:  // Atomics return old value
                 rd_write_en = 1'b1;
             
             // FPU instructions that write to RD (all except FCMP which writes predicate)
             OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV, OP_FMIN, OP_FMAX,
             OP_FSQRT, OP_FABS, OP_FNEG, OP_FMADD, OP_FCVT,
             OP_FRCP, OP_FRSQRT:
+                rd_write_en = 1'b1;
+            
+            // Warp shuffle writes to RD
+            OP_SHFL:
                 rd_write_en = 1'b1;
             
             // VOTE_BALLOT writes to RD (integer register)
@@ -303,7 +324,8 @@ module decoder
             
             // Load/Store read base register (RS1 position = RBASE)
             OP_LD, OP_LD32, OP_LD32S, OP_LDS, OP_LDS32,
-            OP_ST, OP_ST32, OP_STS, OP_STS32:
+            OP_ST, OP_ST32, OP_STS, OP_STS32,
+            OP_ATOM, OP_ATOMS, OP_ATOM64, OP_ATOMS64:
                 rs1_read_en = 1'b1;
             
             // MOV reads RS1 if not immediate move
@@ -314,6 +336,10 @@ module decoder
             OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV, OP_FMIN, OP_FMAX,
             OP_FSQRT, OP_FABS, OP_FNEG, OP_FMADD, OP_FCMP, OP_FCVT,
             OP_FRCP, OP_FRSQRT:
+                rs1_read_en = 1'b1;
+            
+            // Warp shuffle reads RS1 (source data to shuffle)
+            OP_SHFL:
                 rs1_read_en = 1'b1;
             
             default:
@@ -331,12 +357,20 @@ module decoder
             OP_ST, OP_ST32, OP_STS, OP_STS32:
                 rs2_read_en = 1'b0;  // RD field is store data, handled separately
             
+            // Atomic operations read operand from RS2 (or RD for some encodings)
+            OP_ATOM, OP_ATOMS, OP_ATOM64, OP_ATOMS64:
+                rs2_read_en = 1'b1;
+            
             // FPU binary operations read RS2
             OP_FADD, OP_FSUB, OP_FMUL, OP_FDIV, OP_FMIN, OP_FMAX, OP_FCMP:
                 rs2_read_en = 1'b1;
             
             // FPU ternary operation (FMADD) also reads RS2
             OP_FMADD:
+                rs2_read_en = 1'b1;
+            
+            // Warp shuffle reads RS2 (lane index / delta / mask)
+            OP_SHFL:
                 rs2_read_en = 1'b1;
             
             default:
@@ -469,8 +503,10 @@ module decoder
         illegal = 1'b0;
         
         if (instr_valid) begin
-            // Check for reserved opcodes (0x2E-0x3F are reserved)
-            if (opcode >= 6'h2E) begin
+            // Check for reserved opcodes (0x2E-0x2F and 0x35-0x3F are reserved)
+            // Note: 0x30-0x33 are atomic operations
+            // Note: 0x34 is warp shuffle (OP_SHFL)
+            if ((opcode >= 6'h2E && opcode <= 6'h2F) || (opcode >= 6'h35)) begin
                 illegal = 1'b1;
             end
             
@@ -512,6 +548,11 @@ module decoder
                 // FP convert: check valid convert function
                 OP_FCVT: begin
                     if (func_field[4:0] > 5'h0D) illegal = 1'b1;
+                end
+                
+                // Atomic operations: check valid atomic function (0-9)
+                OP_ATOM, OP_ATOMS, OP_ATOM64, OP_ATOMS64: begin
+                    if (func_field[3:0] > 4'h9) illegal = 1'b1;
                 end
                 
                 default: begin
@@ -589,6 +630,13 @@ module decoder
         decoded.is_pop     = is_pop_instr;
         decoded.is_else    = is_else_instr;
         decoded.is_barrier = is_barrier_instr;
+        
+        // Atomic operation flag
+        decoded.is_atomic  = (opcode_enum == OP_ATOM || opcode_enum == OP_ATOMS ||
+                             opcode_enum == OP_ATOM64 || opcode_enum == OP_ATOMS64);
+        
+        // Warp shuffle flag
+        decoded.is_shuffle = (opcode_enum == OP_SHFL);
         
         // Validity
         decoded.valid      = instr_valid && !illegal;

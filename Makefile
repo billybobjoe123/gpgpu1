@@ -20,7 +20,11 @@ INTF_FILES := $(RTL_DIR)/common/gpgpu_interfaces.sv
 RTL_FILES  := $(RTL_DIR)/core/decoder.sv \
               $(RTL_DIR)/core/register_file.sv \
               $(RTL_DIR)/core/alu.sv \
+              $(RTL_DIR)/core/fpu.sv \
+              $(RTL_DIR)/core/fpu_dp.sv \
               $(RTL_DIR)/core/warp_scheduler.sv \
+              $(RTL_DIR)/core/warp_shuffle.sv \
+              $(RTL_DIR)/core/performance_counters.sv \
               $(RTL_DIR)/core/lsu.sv \
               $(RTL_DIR)/core/fetch_unit.sv \
               $(RTL_DIR)/core/gpu_core.sv \
@@ -72,7 +76,7 @@ endif
 # Targets
 #=============================================================================
 
-.PHONY: all clean compile test_decoder test_regfile test_alu test_scheduler test_lsu test_fetch test_core test_top test_memory test_system test_asm help
+.PHONY: all clean compile test_decoder test_regfile test_alu test_scheduler test_lsu test_fetch test_core test_top test_memory test_system test_asm test_atomic test_fpu test_perf help
 
 all:
 	@echo "=============================================="
@@ -84,6 +88,7 @@ all:
 	@$(MAKE) test_alu
 	@$(MAKE) test_scheduler
 	@$(MAKE) test_lsu
+	@$(MAKE) test_atomic
 	@$(MAKE) test_fetch
 	@$(MAKE) test_core
 	@$(MAKE) test_memory
@@ -162,6 +167,98 @@ else
 endif
 
 #-----------------------------------------------------------------------------
+# FPU Test (includes FMA performance tests)
+#-----------------------------------------------------------------------------
+
+test_fpu: $(BUILD_DIR) $(LOG_DIR)
+	@echo "=============================================="
+	@echo "[FPU] FPU AND FMA TEST"
+	@echo "=============================================="
+ifeq ($(SIM),verilator)
+	@echo "[COMPILE] Compiling FPU testbench..."
+	$(COMPILE) $(CFLAGS) --top-module tb_fpu \
+		$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_fpu.sv \
+		-o $(CURDIR)/$(BUILD_DIR)/tb_fpu
+	@echo "[RUN] Running FPU and FMA tests..."
+	./$(BUILD_DIR)/tb_fpu | tee $(LOG_DIR)/tb_fpu.log
+else ifeq ($(SIM),vcs)
+	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_fpu \
+		$(addprefix ../,$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_fpu.sv)
+	./$(BUILD_DIR)/tb_fpu | tee $(LOG_DIR)/tb_fpu.log
+else
+	@echo "Simulator $(SIM) not fully configured. Add support as needed."
+endif
+
+#-----------------------------------------------------------------------------
+# Double-Precision FPU Test
+#-----------------------------------------------------------------------------
+
+test_fpu_dp: $(BUILD_DIR) $(LOG_DIR)
+	@echo "=============================================="
+	@echo "[FPU-DP] DOUBLE-PRECISION FPU TEST"
+	@echo "=============================================="
+ifeq ($(SIM),verilator)
+	@echo "[COMPILE] Compiling DP FPU testbench..."
+	$(COMPILE) $(CFLAGS) --top-module tb_fpu_dp \
+		$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_fpu_dp.sv \
+		-o $(CURDIR)/$(BUILD_DIR)/tb_fpu_dp
+	@echo "[RUN] Running DP FPU tests..."
+	./$(BUILD_DIR)/tb_fpu_dp | tee $(LOG_DIR)/tb_fpu_dp.log
+else ifeq ($(SIM),vcs)
+	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_fpu_dp \
+		$(addprefix ../,$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_fpu_dp.sv)
+	./$(BUILD_DIR)/tb_fpu_dp | tee $(LOG_DIR)/tb_fpu_dp.log
+else
+	@echo "Simulator $(SIM) not fully configured. Add support as needed."
+endif
+
+#-----------------------------------------------------------------------------
+# Warp Shuffle Test
+#-----------------------------------------------------------------------------
+
+test_warp_shuffle: $(BUILD_DIR) $(LOG_DIR)
+	@echo "=============================================="
+	@echo "[SHFL] WARP SHUFFLE TEST"
+	@echo "=============================================="
+ifeq ($(SIM),verilator)
+	@echo "[COMPILE] Compiling warp shuffle testbench..."
+	$(COMPILE) $(CFLAGS) --top-module tb_warp_shuffle \
+		$(PKG_FILES) $(RTL_DIR)/core/warp_shuffle.sv $(TB_DIR)/tb_warp_shuffle.sv \
+		-o $(CURDIR)/$(BUILD_DIR)/tb_warp_shuffle
+	@echo "[RUN] Running warp shuffle tests..."
+	./$(BUILD_DIR)/tb_warp_shuffle | tee $(LOG_DIR)/tb_warp_shuffle.log
+else ifeq ($(SIM),vcs)
+	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_warp_shuffle \
+		$(addprefix ../,$(PKG_FILES) $(RTL_DIR)/core/warp_shuffle.sv $(TB_DIR)/tb_warp_shuffle.sv)
+	./$(BUILD_DIR)/tb_warp_shuffle | tee $(LOG_DIR)/tb_warp_shuffle.log
+else
+	@echo "Simulator $(SIM) not fully configured. Add support as needed."
+endif
+
+#-----------------------------------------------------------------------------
+# Performance Counters Test
+#-----------------------------------------------------------------------------
+
+test_perf: $(BUILD_DIR) $(LOG_DIR)
+	@echo "=============================================="
+	@echo "[PERF] PERFORMANCE COUNTERS TEST"
+	@echo "=============================================="
+ifeq ($(SIM),verilator)
+	@echo "[COMPILE] Compiling performance counters testbench..."
+	$(COMPILE) $(CFLAGS) --top-module tb_performance_counters \
+		$(PKG_FILES) $(RTL_DIR)/core/performance_counters.sv $(TB_DIR)/tb_performance_counters.sv \
+		-o $(CURDIR)/$(BUILD_DIR)/tb_performance_counters
+	@echo "[RUN] Running performance counters tests..."
+	./$(BUILD_DIR)/tb_performance_counters | tee $(LOG_DIR)/tb_performance_counters.log
+else ifeq ($(SIM),vcs)
+	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_performance_counters \
+		$(addprefix ../,$(PKG_FILES) $(RTL_DIR)/core/performance_counters.sv $(TB_DIR)/tb_performance_counters.sv)
+	./$(BUILD_DIR)/tb_performance_counters | tee $(LOG_DIR)/tb_performance_counters.log
+else
+	@echo "Simulator $(SIM) not fully configured. Add support as needed."
+endif
+
+#-----------------------------------------------------------------------------
 # ALU Test
 #-----------------------------------------------------------------------------
 
@@ -226,6 +323,29 @@ else ifeq ($(SIM),vcs)
 	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_lsu \
 		$(addprefix ../,$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_lsu.sv)
 	./$(BUILD_DIR)/tb_lsu | tee $(LOG_DIR)/tb_lsu.log
+else
+	@echo "Simulator $(SIM) not fully configured. Add support as needed."
+endif
+
+#-----------------------------------------------------------------------------
+# Atomic Operations Test
+#-----------------------------------------------------------------------------
+
+test_atomic: $(BUILD_DIR) $(LOG_DIR)
+	@echo "=============================================="
+	@echo "[ATOMIC] ATOMIC OPERATIONS TEST"
+	@echo "=============================================="
+ifeq ($(SIM),verilator)
+	@echo "[COMPILE] Compiling atomic testbench..."
+	$(COMPILE) $(CFLAGS) --top-module tb_atomic \
+		$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_atomic.sv \
+		-o $(CURDIR)/$(BUILD_DIR)/tb_atomic
+	@echo "[RUN] Running atomic operations tests..."
+	./$(BUILD_DIR)/tb_atomic | tee $(LOG_DIR)/tb_atomic.log
+else ifeq ($(SIM),vcs)
+	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_atomic \
+		$(addprefix ../,$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_atomic.sv)
+	./$(BUILD_DIR)/tb_atomic | tee $(LOG_DIR)/tb_atomic.log
 else
 	@echo "Simulator $(SIM) not fully configured. Add support as needed."
 endif
@@ -338,10 +458,7 @@ ifeq ($(SIM),verilator)
 	@echo "[COMPILE] This includes L2 cache and memory controller..."
 	$(COMPILE) $(CFLAGS) --top-module tb_gpu_system \
 		$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_gpu_system.sv \
-		-o tb_gpu_system
-	@mkdir -p obj_dir/tb_gpu_system
-	cd obj_dir && make -f Vtb_gpu_system.mk
-	cp obj_dir/tb_gpu_system $(BUILD_DIR)/tb_gpu_system
+		-o $(CURDIR)/$(BUILD_DIR)/tb_gpu_system
 	@echo "[COMPILE] Compilation complete!"
 	@echo "[RUN] Running GPU system tests..."
 	./$(BUILD_DIR)/tb_gpu_system | tee $(LOG_DIR)/tb_gpu_system.log

@@ -35,6 +35,7 @@ module tb_lsu;
     logic [NUM_THREADS-1:0]                    req_active_mask;
     logic [NUM_THREADS-1:0]                    req_pred_mask;
     opcode_t                                   req_opcode;
+    logic [7:0]                                req_func;
     logic [REG_ADDR_WIDTH-1:0]                 req_rd;
     logic [NUM_THREADS-1:0][ADDR_WIDTH-1:0]    req_base_addr;
     logic signed [12:0]                        req_offset;
@@ -104,6 +105,7 @@ module tb_lsu;
         .req_active_mask(req_active_mask),
         .req_pred_mask(req_pred_mask),
         .req_opcode(req_opcode),
+        .req_func(req_func),
         .req_rd(req_rd),
         .req_base_addr(req_base_addr),
         .req_offset(req_offset),
@@ -245,6 +247,7 @@ module tb_lsu;
             req_active_mask = '0;
             req_pred_mask = '1;  // All predicates true by default
             req_opcode = OP_LD;
+            req_func = 8'h0;
             req_rd = 0;
             req_base_addr = '0;
             req_offset = 0;

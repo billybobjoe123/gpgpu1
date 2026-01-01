@@ -249,6 +249,20 @@ module fpu_lane
     );
     
     //=========================================================================
+    // FP Fused Multiply-Add - Single Precision
+    // Computes: a * b + c with single rounding (better precision than mul+add)
+    //=========================================================================
+    
+    logic [31:0] sp_fma_result;
+    
+    fp_fma_sp u_sp_fma (
+        .a      (a[31:0]),
+        .b      (b[31:0]),
+        .c      (c[31:0]),
+        .result (sp_fma_result)
+    );
+    
+    //=========================================================================
     // FP Square Root - Single Precision
     //=========================================================================
     
@@ -274,6 +288,100 @@ module fpu_lane
         .a      (a[31:0]),
         .result (sp_rsqrt_result)
     );
+    
+    //=========================================================================
+    // Double-Precision Operations
+    //=========================================================================
+    
+    logic [63:0] dp_add_result;
+    logic [63:0] dp_mul_result;
+    logic [63:0] dp_div_result;
+    logic [63:0] dp_fma_result;
+    logic [63:0] dp_sqrt_result;
+    logic [63:0] dp_rcp_result;
+    logic [63:0] dp_rsqrt_result;
+    logic [63:0] dp_min_result;
+    logic [63:0] dp_max_result;
+    logic        dp_cmp_result;
+    
+    // DP Absolute value: clear sign bit
+    logic [63:0] dp_abs_result;
+    assign dp_abs_result = {1'b0, a[62:0]};
+    
+    // DP Negate: flip sign bit
+    logic [63:0] dp_neg_result;
+    assign dp_neg_result = {~a[63], a[62:0]};
+    
+    // DP Add/Sub
+    fp_adder_dp u_dp_adder (
+        .a      (a),
+        .b      (b),
+        .sub    (opcode == OP_FSUB),
+        .result (dp_add_result)
+    );
+    
+    // DP Multiply
+    fp_mul_dp u_dp_mul (
+        .a      (a),
+        .b      (b),
+        .result (dp_mul_result)
+    );
+    
+    // DP Divide
+    fp_div_dp u_dp_div (
+        .a      (a),
+        .b      (b),
+        .result (dp_div_result)
+    );
+    
+    // DP FMA
+    fp_fma_dp u_dp_fma (
+        .a      (a),
+        .b      (b),
+        .c      (c),
+        .result (dp_fma_result)
+    );
+    
+    // DP Square Root
+    fp_sqrt_dp u_dp_sqrt (
+        .a      (a),
+        .result (dp_sqrt_result)
+    );
+    
+    // DP Reciprocal
+    fp_rcp_dp u_dp_rcp (
+        .a      (a),
+        .result (dp_rcp_result)
+    );
+    
+    // DP Reciprocal Square Root
+    fp_rsqrt_dp u_dp_rsqrt (
+        .a      (a),
+        .result (dp_rsqrt_result)
+    );
+    
+    // DP Min
+    fp_min_dp u_dp_min (
+        .a      (a),
+        .b      (b),
+        .result (dp_min_result)
+    );
+    
+    // DP Max
+    fp_max_dp u_dp_max (
+        .a      (a),
+        .b      (b),
+        .result (dp_max_result)
+    );
+    
+    // DP Compare
+    fp_cmp_dp u_dp_cmp (
+        .a      (a),
+        .b      (b),
+        .func   (cmp_func),
+        .result (dp_cmp_result)
+    );
+
     
     //=========================================================================
     // FP Compare - Single Precision
@@ -334,8 +442,7 @@ module fpu_lane
             case (opcode)
                 OP_FADD: begin
                     if (is_double) begin
-                        // Double precision - not implemented yet
-                        result = '0;
+                        result = dp_add_result;
                     end else begin
                         result = {32'h0, sp_add_result};
                     end
@@ -343,7 +450,7 @@ module fpu_lane
                 
                 OP_FSUB: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_add_result;  // DP adder handles sub via input
                     end else begin
                         result = {32'h0, sp_sub_result};
                     end
@@ -351,7 +458,7 @@ module fpu_lane
                 
                 OP_FMUL: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_mul_result;
                     end else begin
                         result = {32'h0, sp_mul_result};
                     end
@@ -359,7 +466,7 @@ module fpu_lane
                 
                 OP_FDIV: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_div_result;
                     end else begin
                         result = {32'h0, sp_div_result};
                     end
@@ -367,7 +474,7 @@ module fpu_lane
                 
                 OP_FMIN: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_min_result;
                     end else begin
                         result = {32'h0, sp_min_result};
                     end
@@ -375,7 +482,7 @@ module fpu_lane
                 
                 OP_FMAX: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_max_result;
                     end else begin
                         result = {32'h0, sp_max_result};
                     end
@@ -383,7 +490,7 @@ module fpu_lane
                 
                 OP_FSQRT: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_sqrt_result;
                     end else begin
                         result = {32'h0, sp_sqrt_result};
                     end
@@ -391,7 +498,7 @@ module fpu_lane
                 
                 OP_FABS: begin
                     if (is_double) begin
-                        result = {1'b0, a[62:0]};  // Clear sign bit
+                        result = dp_abs_result;
                     end else begin
                         result = {32'h0, sp_abs_result};
                     end
@@ -399,15 +506,20 @@ module fpu_lane
                 
                 OP_FNEG: begin
                     if (is_double) begin
-                        result = {~a[63], a[62:0]};  // Flip sign bit
+                        result = dp_neg_result;
                     end else begin
                         result = {32'h0, sp_neg_result};
                     end
                 end
                 
                 OP_FCMP: begin
-                    pred_out = sp_cmp_result;
-                    result   = {63'h0, sp_cmp_result};  // Also store in result
+                    if (is_double) begin
+                        pred_out = dp_cmp_result;
+                        result   = {63'h0, dp_cmp_result};
+                    end else begin
+                        pred_out = sp_cmp_result;
+                        result   = {63'h0, sp_cmp_result};
+                    end
                 end
                 
                 OP_FCVT: begin
@@ -420,7 +532,7 @@ module fpu_lane
                 
                 OP_FRCP: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_rcp_result;
                     end else begin
                         result = {32'h0, sp_rcp_result};
                     end
@@ -428,16 +540,18 @@ module fpu_lane
                 
                 OP_FRSQRT: begin
                     if (is_double) begin
-                        result = '0;
+                        result = dp_rsqrt_result;
                     end else begin
                         result = {32'h0, sp_rsqrt_result};
                     end
                 end
                 
                 OP_FMADD: begin
-                    // FMA: a * b + c - requires dedicated FMA unit
-                    // For now, use separate mul + add
-                    result = '0;  // TODO: Implement FMA
+                    if (is_double) begin
+                        result = dp_fma_result;
+                    end else begin
+                        result = {32'h0, sp_fma_result};
+                    end
                 end
                 
                 default: begin
@@ -775,6 +889,243 @@ endmodule
 
 
 //=============================================================================
+// FP Fused Multiply-Add - Single Precision (IEEE 754)
+// Computes: result = a * b + c with only ONE rounding at the end
+// Benefits over separate MUL + ADD:
+//   1. Better numerical accuracy (single rounding vs double rounding)
+//   2. No intermediate overflow/underflow for the product
+//   3. Single instruction = potentially higher throughput
+//=============================================================================
+
+module fp_fma_sp (
+    input  logic [31:0] a,
+    input  logic [31:0] b,
+    input  logic [31:0] c,
+    output logic [31:0] result
+);
+
+    //=========================================================================
+    // Unpack Inputs
+    //=========================================================================
+    
+    logic        a_sign, b_sign, c_sign;
+    logic [7:0]  a_exp,  b_exp,  c_exp;
+    logic [23:0] a_mant, b_mant, c_mant;  // Include implicit 1
+    
+    assign a_sign = a[31];
+    assign b_sign = b[31];
+    assign c_sign = c[31];
+    
+    assign a_exp  = a[30:23];
+    assign b_exp  = b[30:23];
+    assign c_exp  = c[30:23];
+    
+    // Add implicit leading 1 for normalized numbers, 0 for denormals
+    assign a_mant = (a_exp == 8'h00) ? {1'b0, a[22:0]} : {1'b1, a[22:0]};
+    assign b_mant = (b_exp == 8'h00) ? {1'b0, b[22:0]} : {1'b1, b[22:0]};
+    assign c_mant = (c_exp == 8'h00) ? {1'b0, c[22:0]} : {1'b1, c[22:0]};
+    
+    //=========================================================================
+    // Special Value Detection
+    //=========================================================================
+    
+    logic a_is_zero, b_is_zero, c_is_zero;
+    logic a_is_inf,  b_is_inf,  c_is_inf;
+    logic a_is_nan,  b_is_nan,  c_is_nan;
+    
+    assign a_is_zero = (a_exp == 8'h00) && (a[22:0] == 23'h0);
+    assign b_is_zero = (b_exp == 8'h00) && (b[22:0] == 23'h0);
+    assign c_is_zero = (c_exp == 8'h00) && (c[22:0] == 23'h0);
+    
+    assign a_is_inf  = (a_exp == 8'hFF) && (a[22:0] == 23'h0);
+    assign b_is_inf  = (b_exp == 8'hFF) && (b[22:0] == 23'h0);
+    assign c_is_inf  = (c_exp == 8'hFF) && (c[22:0] == 23'h0);
+    
+    assign a_is_nan  = (a_exp == 8'hFF) && (a[22:0] != 23'h0);
+    assign b_is_nan  = (b_exp == 8'hFF) && (b[22:0] != 23'h0);
+    assign c_is_nan  = (c_exp == 8'hFF) && (c[22:0] != 23'h0);
+    
+    //=========================================================================
+    // Step 1: Multiply a * b (keep full precision - 48 bits)
+    //=========================================================================
+    
+    logic        prod_sign;
+    logic [47:0] prod_mant;  // 24 * 24 = 48 bits
+    logic [9:0]  prod_exp;   // Extended to handle overflow
+    
+    assign prod_sign = a_sign ^ b_sign;
+    assign prod_mant = a_mant * b_mant;
+    
+    // Product exponent: (a_exp - 127) + (b_exp - 127) + 127 = a_exp + b_exp - 127
+    assign prod_exp = (a_is_zero || b_is_zero) ? 10'd0 : 
+                      {2'b0, a_exp} + {2'b0, b_exp} - 10'd127;
+    
+    //=========================================================================
+    // Step 2: Align product and addend for addition
+    //=========================================================================
+    
+    // The product mantissa is 48 bits with the binary point after bit 46
+    // We need to align C to add it to the product
+    // Use extended precision (72 bits) to preserve accuracy
+    
+    logic [9:0]  c_exp_eff;
+    logic [71:0] prod_aligned;  // Product aligned for addition
+    logic [71:0] c_aligned;     // C aligned for addition
+    logic [9:0]  result_exp_pre;
+    logic        effective_sub;
+    
+    assign c_exp_eff = (c_is_zero) ? 10'd0 : {2'b0, c_exp};
+    assign effective_sub = prod_sign ^ c_sign;
+    
+    // Determine alignment shift
+    logic signed [10:0] exp_diff;
+    logic [6:0] shift_amount;
+    logic prod_larger;
+    
+    always_comb begin
+        // Normalize product mantissa position
+        // prod_mant[47] is the leading bit if >= 2.0, else prod_mant[46]
+        if (prod_mant[47]) begin
+            exp_diff = $signed({1'b0, prod_exp + 1}) - $signed({1'b0, c_exp_eff});
+            result_exp_pre = prod_exp + 1;
+        end else begin
+            exp_diff = $signed({1'b0, prod_exp}) - $signed({1'b0, c_exp_eff});
+            result_exp_pre = prod_exp;
+        end
+        
+        prod_larger = (exp_diff >= 0);
+        
+        // Calculate shift amount (capped)
+        if (exp_diff >= 0) begin
+            shift_amount = (exp_diff > 72) ? 7'd72 : exp_diff[6:0];
+        end else begin
+            shift_amount = (-exp_diff > 72) ? 7'd72 : (-exp_diff[6:0]);
+        end
+        
+        // Align operands
+        if (prod_mant[47]) begin
+            prod_aligned = {prod_mant, 24'h0};  // 48 + 24 = 72 bits
+        end else begin
+            prod_aligned = {prod_mant[46:0], 25'h0};  // Shift left 1
+        end
+        
+        // Align C to match product
+        if (prod_larger) begin
+            c_aligned = {c_mant, 48'h0} >> shift_amount;
+        end else begin
+            c_aligned = {c_mant, 48'h0};
+            prod_aligned = prod_aligned >> shift_amount;
+            result_exp_pre = c_exp_eff;
+        end
+    end
+    
+    //=========================================================================
+    // Step 3: Add/Subtract with full precision
+    //=========================================================================
+    
+    logic [72:0] sum_mant;  // Extra bit for carry
+    logic        sum_sign;
+    
+    always_comb begin
+        if (a_is_zero || b_is_zero) begin
+            // Product is zero, result is C
+            sum_mant = {1'b0, c_aligned};
+            sum_sign = c_sign;
+        end else if (c_is_zero) begin
+            // C is zero, result is product
+            sum_mant = {1'b0, prod_aligned};
+            sum_sign = prod_sign;
+        end else if (effective_sub) begin
+            // Subtraction: determine which is larger
+            if (prod_aligned >= c_aligned) begin
+                sum_mant = {1'b0, prod_aligned} - {1'b0, c_aligned};
+                sum_sign = prod_sign;
+            end else begin
+                sum_mant = {1'b0, c_aligned} - {1'b0, prod_aligned};
+                sum_sign = c_sign;
+            end
+        end else begin
+            // Addition
+            sum_mant = {1'b0, prod_aligned} + {1'b0, c_aligned};
+            sum_sign = prod_sign;  // Same sign
+        end
+    end
+    
+    //=========================================================================
+    // Step 4: Normalize and Round (single rounding - key FMA benefit!)
+    //=========================================================================
+    
+    logic [7:0]  result_exp;
+    logic [22:0] result_mant;
+    logic        result_sign;
+    
+    always_comb begin
+        result = 32'h0;
+        result_sign = sum_sign;
+        result_exp = 8'h0;
+        result_mant = 23'h0;
+        
+        // Handle special cases first
+        if (a_is_nan || b_is_nan || c_is_nan) begin
+            result = 32'h7FC00000;  // Quiet NaN
+        end else if ((a_is_inf && b_is_zero) || (b_is_inf && a_is_zero)) begin
+            result = 32'h7FC00000;  // inf * 0 = NaN
+        end else if (a_is_inf || b_is_inf) begin
+            // Product is infinity
+            if (c_is_inf && effective_sub) begin
+                result = 32'h7FC00000;  // inf - inf = NaN
+            end else begin
+                result = {prod_sign, 8'hFF, 23'h0};  // Infinity
+            end
+        end else if (c_is_inf) begin
+            result = {c_sign, 8'hFF, 23'h0};  // C is infinity
+        end else if (sum_mant == 0) begin
+            result = 32'h00000000;  // Zero
+        end else begin
+            // Normalize the result
+            logic [6:0] leading_zeros;
+            logic [72:0] normalized_mant;
+            logic signed [10:0] final_exp;
+            
+            // Find leading one position
+            leading_zeros = 0;
+            for (int i = 72; i >= 0; i--) begin
+                if (sum_mant[i]) begin
+                    leading_zeros = 72 - i[6:0];
+                    break;
+                end
+            end
+            
+            // Handle carry overflow
+            if (sum_mant[72]) begin
+                // Overflow from addition
+                final_exp = result_exp_pre + 1;
+                normalized_mant = sum_mant;
+            end else begin
+                // Shift to normalize
+                final_exp = $signed({1'b0, result_exp_pre}) - $signed({4'b0, leading_zeros}) + 1;
+                normalized_mant = sum_mant << leading_zeros;
+            end
+            
+            // Extract mantissa (bits 71:49 for 23-bit mantissa)
+            if (final_exp >= 11'sd255) begin
+                // Overflow to infinity
+                result = {result_sign, 8'hFF, 23'h0};
+            end else if (final_exp <= 11'sd0) begin
+                // Underflow to zero (simplified - could do denormals)
+                result = {result_sign, 31'h0};
+            end else begin
+                result_exp = final_exp[7:0];
+                result_mant = normalized_mant[71:49];
+                result = {result_sign, result_exp, result_mant};
+            end
+        end
+    end
+
+endmodule
+
+
+//=============================================================================
 // FP Square Root - Single Precision (Approximation)
 //=============================================================================
 
@@ -950,9 +1301,38 @@ module fp_convert
     assign int_val  = a;
     assign uint_val = a;
     
+    // Working variables for conversion (moved outside always_comb)
+    logic        cvt_sign;
+    logic [63:0] cvt_abs_val;
+    logic [5:0]  cvt_leading_one;
+    logic [7:0]  cvt_exp;
+    logic [22:0] cvt_mant;
+    logic [7:0]  cvt_true_exp;
+    logic [63:0] cvt_mant_shifted;
+    
+    // Find leading one function
+    function automatic logic [5:0] find_leading_one(input logic [63:0] val);
+        logic [5:0] result;
+        result = 0;
+        for (int i = 63; i >= 0; i--) begin
+            if (val[i]) begin
+                result = i[5:0];
+                break;
+            end
+        end
+        return result;
+    endfunction
+    
     always_comb begin
         sp_result = 32'h0;
         dp_result = 64'h0;
+        cvt_sign = 1'b0;
+        cvt_abs_val = 64'h0;
+        cvt_leading_one = 6'h0;
+        cvt_exp = 8'h0;
+        cvt_mant = 23'h0;
+        cvt_true_exp = 8'h0;
+        cvt_mant_shifted = 64'h0;
         
         case (func)
             FCVT_I2S: begin
@@ -960,28 +1340,12 @@ module fp_convert
                 if (int_val == 0) begin
                     sp_result = 32'h0;
                 end else begin
-                    logic        sign;
-                    logic [63:0] abs_val;
-                    logic [5:0]  leading_one;
-                    
-                    sign    = int_val[63];
-                    abs_val = sign ? -int_val : int_val;
-                    
-                    // Find leading one
-                    leading_one = 0;
-                    for (int i = 63; i >= 0; i--) begin
-                        if (abs_val[i]) begin
-                            leading_one = i[5:0];
-                            break;
-                        end
-                    end
-                    
-                    // Create float
-                    logic [7:0]  exp;
-                    logic [22:0] mant;
-                    exp  = leading_one + 8'd127;
-                    mant = (abs_val << (63 - leading_one)) >> 41;
-                    sp_result = {sign, exp, mant};
+                    cvt_sign    = int_val[63];
+                    cvt_abs_val = cvt_sign ? -int_val : int_val;
+                    cvt_leading_one = find_leading_one(cvt_abs_val);
+                    cvt_exp  = cvt_leading_one + 8'd127;
+                    cvt_mant = (cvt_abs_val << (63 - cvt_leading_one)) >> 41;
+                    sp_result = {cvt_sign, cvt_exp, cvt_mant};
                 end
             end
             
@@ -990,20 +1354,10 @@ module fp_convert
                 if (uint_val == 0) begin
                     sp_result = 32'h0;
                 end else begin
-                    logic [5:0] leading_one;
-                    leading_one = 0;
-                    for (int i = 63; i >= 0; i--) begin
-                        if (uint_val[i]) begin
-                            leading_one = i[5:0];
-                            break;
-                        end
-                    end
-                    
-                    logic [7:0]  exp;
-                    logic [22:0] mant;
-                    exp  = leading_one + 8'd127;
-                    mant = (uint_val << (63 - leading_one)) >> 41;
-                    sp_result = {1'b0, exp, mant};
+                    cvt_leading_one = find_leading_one(uint_val);
+                    cvt_exp  = cvt_leading_one + 8'd127;
+                    cvt_mant = (uint_val << (63 - cvt_leading_one)) >> 41;
+                    sp_result = {1'b0, cvt_exp, cvt_mant};
                 end
             end
             
@@ -1014,11 +1368,9 @@ module fp_convert
                 end else if (sp_exp == 8'hFF) begin
                     dp_result = sp_sign ? 64'h8000000000000000 : 64'h7FFFFFFFFFFFFFFF;
                 end else begin
-                    logic [7:0]  true_exp;
-                    logic [63:0] mant_shifted;
-                    true_exp     = sp_exp - 8'd127;
-                    mant_shifted = {1'b1, sp_mant, 40'h0} >> (63 - true_exp);
-                    dp_result    = sp_sign ? -mant_shifted : mant_shifted;
+                    cvt_true_exp     = sp_exp - 8'd127;
+                    cvt_mant_shifted = {1'b1, sp_mant, 40'h0} >> (63 - cvt_true_exp);
+                    dp_result        = sp_sign ? -cvt_mant_shifted : cvt_mant_shifted;
                 end
             end
             
@@ -1029,11 +1381,9 @@ module fp_convert
                 end else if (sp_exp == 8'hFF) begin
                     dp_result = 64'hFFFFFFFFFFFFFFFF;
                 end else begin
-                    logic [7:0]  true_exp;
-                    logic [63:0] mant_shifted;
-                    true_exp     = sp_exp - 8'd127;
-                    mant_shifted = {1'b1, sp_mant, 40'h0} >> (63 - true_exp);
-                    dp_result    = mant_shifted;
+                    cvt_true_exp     = sp_exp - 8'd127;
+                    cvt_mant_shifted = {1'b1, sp_mant, 40'h0} >> (63 - cvt_true_exp);
+                    dp_result        = cvt_mant_shifted;
                 end
             end
             
