@@ -1,0 +1,22 @@
+# Ignore Mac system files
+.DS_Store
+
+# Ignore build output
+/dist
+/build
+
+# Build artifacts
+obj_dir/
+logs/
+*.o
+*.a
+*.cpp
+*.h
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary files
+*.tmp
+*.log
