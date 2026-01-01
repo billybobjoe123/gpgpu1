@@ -150,8 +150,11 @@ module performance_counters
     //=========================================================================
     
     // Helper: count set bits (popcount) for aggregating across cores
-    function automatic logic [3:0] popcount4(input logic [3:0] v);
-        popcount4 = v[0] + v[1] + v[2] + v[3];
+    function automatic logic [$clog2(NUM_CORES+1)-1:0] popcount(input logic [NUM_CORES-1:0] v);
+        popcount = '0;
+        for (int i = 0; i < NUM_CORES; i++) begin
+            popcount = popcount + v[i];
+        end
     endfunction
     
     always_ff @(posedge clk or negedge rst_n) begin
@@ -191,30 +194,30 @@ module performance_counters
             
             // Total instructions retired (sum across cores)
             counters[CTR_INSTR_RETIRED] <= counters[CTR_INSTR_RETIRED] + 
-                                           popcount4(core_instr_valid);
+                                           popcount(core_instr_valid);
             
             // By type
             counters[CTR_INSTR_ALU] <= counters[CTR_INSTR_ALU] + 
-                                       popcount4(core_instr_valid & core_instr_is_alu);
+                                       popcount(core_instr_valid & core_instr_is_alu);
             counters[CTR_INSTR_FPU] <= counters[CTR_INSTR_FPU] + 
-                                       popcount4(core_instr_valid & core_instr_is_fpu);
+                                       popcount(core_instr_valid & core_instr_is_fpu);
             counters[CTR_INSTR_MEM] <= counters[CTR_INSTR_MEM] + 
-                                       popcount4(core_instr_valid & core_instr_is_mem);
+                                       popcount(core_instr_valid & core_instr_is_mem);
             counters[CTR_INSTR_BRANCH] <= counters[CTR_INSTR_BRANCH] + 
-                                          popcount4(core_instr_valid & core_instr_is_branch);
+                                          popcount(core_instr_valid & core_instr_is_branch);
             counters[CTR_INSTR_SHUFFLE] <= counters[CTR_INSTR_SHUFFLE] + 
-                                           popcount4(core_instr_valid & core_instr_is_shuffle);
+                                           popcount(core_instr_valid & core_instr_is_shuffle);
             counters[CTR_INSTR_ATOMIC] <= counters[CTR_INSTR_ATOMIC] + 
-                                          popcount4(core_instr_valid & core_instr_is_atomic);
+                                          popcount(core_instr_valid & core_instr_is_atomic);
             
             // =================================================================
             // Branch Counters
             // =================================================================
             
             counters[CTR_BRANCH_TAKEN] <= counters[CTR_BRANCH_TAKEN] + 
-                                          popcount4(core_branch_taken);
+                                          popcount(core_branch_taken);
             counters[CTR_BRANCH_DIVERGENT] <= counters[CTR_BRANCH_DIVERGENT] + 
-                                              popcount4(core_branch_divergent);
+                                              popcount(core_branch_divergent);
             
             // =================================================================
             // L2 Cache Counters
@@ -245,24 +248,24 @@ module performance_counters
             // =================================================================
             
             counters[CTR_STALL_FETCH] <= counters[CTR_STALL_FETCH] + 
-                                         popcount4(core_stall_fetch);
+                                         popcount(core_stall_fetch);
             counters[CTR_STALL_DECODE] <= counters[CTR_STALL_DECODE] + 
-                                          popcount4(core_stall_decode);
+                                          popcount(core_stall_decode);
             counters[CTR_STALL_OPERAND] <= counters[CTR_STALL_OPERAND] + 
-                                           popcount4(core_stall_operand);
+                                           popcount(core_stall_operand);
             counters[CTR_STALL_EXECUTE] <= counters[CTR_STALL_EXECUTE] + 
-                                           popcount4(core_stall_execute);
+                                           popcount(core_stall_execute);
             counters[CTR_STALL_MEMORY] <= counters[CTR_STALL_MEMORY] + 
-                                          popcount4(core_stall_memory);
+                                          popcount(core_stall_memory);
             counters[CTR_STALL_SCOREBOARD] <= counters[CTR_STALL_SCOREBOARD] + 
-                                              popcount4(core_stall_scoreboard);
+                                              popcount(core_stall_scoreboard);
             
             // =================================================================
             // Warp Barrier Waiting
             // =================================================================
             
             counters[CTR_WARP_BARRIER_WAIT] <= counters[CTR_WARP_BARRIER_WAIT] + 
-                                               popcount4(core_warp_at_barrier);
+                                               popcount(core_warp_at_barrier);
             
             // =================================================================
             // FPU Counters

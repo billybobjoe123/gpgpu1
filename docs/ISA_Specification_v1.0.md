@@ -308,8 +308,24 @@ Used for divergence control and warp-level operations.
 | 29 | 011101 | 0x1D | LUI | I | Load upper immediate |
 | 30 | 011110 | 0x1E | AUIPC | I | Add upper immediate to PC |
 | 31 | 011111 | 0x1F | STS32 | L | Store 32-bit to shared memory |
-| 32-47 | 10xxxx | 0x20-0x2F | *reserved* | - | Reserved for floating-point |
-| 48-63 | 11xxxx | 0x30-0x3F | *reserved* | - | Reserved for future extensions |
+| 32 | 100000 | 0x20 | FADD | F | Floating-point add |
+| 33 | 100001 | 0x21 | FSUB | F | Floating-point subtract |
+| 34 | 100010 | 0x22 | FMUL | F | Floating-point multiply |
+| 35 | 100011 | 0x23 | FDIV | F | Floating-point divide |
+| 36 | 100100 | 0x24 | FMIN | F | Floating-point minimum |
+| 37 | 100101 | 0x25 | FMAX | F | Floating-point maximum |
+| 38 | 100110 | 0x26 | FABS | F | Floating-point absolute value |
+| 39 | 100111 | 0x27 | FNEG | F | Floating-point negate |
+| 40 | 101000 | 0x28 | FSQRT | F | Floating-point square root |
+| 41 | 101001 | 0x29 | FMADD | F | Fused multiply-add |
+| 42 | 101010 | 0x2A | FCMP | F | Floating-point compare |
+| 43-47 | 10xxxx | 0x2B-0x2F | *reserved* | - | Reserved for FPU extensions |
+| 48 | 110000 | 0x30 | ATOM | A | Atomic operations (ADD,MIN,MAX,AND,OR,XOR) |
+| 49 | 110001 | 0x31 | ATOM.EXCH | A | Atomic exchange |
+| 50 | 110010 | 0x32 | ATOM.CAS | A | Atomic compare-and-swap |
+| 51 | 110011 | 0x33 | *reserved* | - | Reserved for atomics |
+| 52 | 110100 | 0x34 | SHFL | W | Warp shuffle operations |
+| 53-63 | 11xxxx | 0x35-0x3F | *reserved* | - | Reserved for future extensions |
 
 ### 5.2 ALU Function Codes (Opcode 0x00)
 
@@ -358,7 +374,112 @@ For immediate operations, the function is encoded in bits [15:14] of IMM16:
 | 6 | 00000110 | 0x06 | REM | RD ← RS1 % RS2 signed |
 | 7 | 00000111 | 0x07 | REMU | RD ← RS1 % RS2 unsigned |
 
-### 5.5 Shift Function Codes (Opcode 0x04)
+### 5.5 Floating-Point Instructions (Opcodes 0x20-0x2A)
+
+GPGPU-1 supports IEEE 754 floating-point operations in both single-precision (32-bit) and double-precision (64-bit) formats.
+
+#### 5.5.1 Precision Selection
+
+The precision is encoded in the FUNC[7] bit:
+- `FUNC[7] = 0`: Single precision (32-bit, uses lower 32 bits of register)
+- `FUNC[7] = 1`: Double precision (64-bit, uses full 64-bit register)
+
+#### 5.5.2 FPU Instruction Format
+
+```
+ 31-26 | 25-21 | 20-16 | 15-11 | 10-8  | 7     | 6-0
+-------|-------|-------|-------|-------|-------|-------
+OPCODE |  RD   |  RS1  |  RS2  | pred  | prec  | unused
+```
+
+#### 5.5.3 Arithmetic Operations
+
+| Opcode | Mnemonic | Operation | Single | Double |
+|--------|----------|-----------|--------|--------|
+| 0x20 | FADD | RD ← RS1 + RS2 | ✓ | ✓ |
+| 0x21 | FSUB | RD ← RS1 - RS2 | ✓ | ✓ |
+| 0x22 | FMUL | RD ← RS1 × RS2 | ✓ | ✓ |
+| 0x23 | FDIV | RD ← RS1 ÷ RS2 | ✓ | ✓ |
+| 0x24 | FMIN | RD ← min(RS1, RS2) | ✓ | ✓ |
+| 0x25 | FMAX | RD ← max(RS1, RS2) | ✓ | ✓ |
+| 0x26 | FABS | RD ← \|RS1\| | ✓ | ✓ |
+| 0x27 | FNEG | RD ← -RS1 | ✓ | ✓ |
+| 0x28 | FSQRT | RD ← √RS1 | ✓ | ✓ |
+| 0x29 | FMADD | RD ← RS1 × RS2 + RS3 | ✓ | ✓ |
+
+#### 5.5.4 Fused Multiply-Add (FMADD)
+
+FMADD performs a fused multiply-add with single rounding:
+
+**Format:**
+```
+ 31-26 | 25-21 | 20-16 | 15-11 | 10-6  | 5-3   | 2-0
+-------|-------|-------|-------|-------|-------|-------
+ 0x29  |  RD   |  RS1  |  RS2  |  RS3  | pred  | unused
+```
+
+**Operation:** `RD ← (RS1 × RS2) + RS3` with single rounding
+
+**Advantages:**
+- Higher precision (no intermediate rounding)
+- 2x throughput for multiply-accumulate operations
+- IEEE 754-2008 compliant
+
+#### 5.5.5 Floating-Point Compare (FCMP)
+
+**Opcode:** 0x2A
+
+**Operation:** Sets predicate register based on comparison
+
+| FUNC[2:0] | Mnemonic | Condition |
+|-----------|----------|-----------|
+| 000 | FCMP.EQ | P[rd] ← (RS1 == RS2) |
+| 001 | FCMP.NE | P[rd] ← (RS1 ≠ RS2) |
+| 010 | FCMP.LT | P[rd] ← (RS1 < RS2) |
+| 011 | FCMP.LE | P[rd] ← (RS1 ≤ RS2) |
+| 100 | FCMP.GT | P[rd] ← (RS1 > RS2) |
+| 101 | FCMP.GE | P[rd] ← (RS1 ≥ RS2) |
+| 110 | FCMP.ORD | P[rd] ← !isNaN(RS1) && !isNaN(RS2) |
+| 111 | FCMP.UNO | P[rd] ← isNaN(RS1) \|\| isNaN(RS2) |
+
+#### 5.5.6 Special Values Handling
+
+Per IEEE 754:
+
+| Input | FADD/FSUB/FMUL | FDIV | FSQRT |
+|-------|----------------|------|-------|
+| ±0 | Normal rules | 1/0=±∞, 0/0=NaN | √0=0 |
+| ±∞ | ∞-∞=NaN | ∞/∞=NaN, x/∞=0 | √∞=∞ |
+| NaN | NaN propagates | NaN | NaN |
+| Denormal | Flush to zero or gradual underflow | Flush to zero | Flush to zero |
+
+#### 5.5.7 Usage Examples
+
+**Single-precision add:**
+```asm
+    FADD    R3, R1, R2      ; R3 = R1 + R2 (SP, FUNC[7]=0)
+```
+
+**Double-precision multiply:**
+```asm
+    FMUL.D  R3, R1, R2      ; R3 = R1 * R2 (DP, FUNC[7]=1)
+```
+
+**Fused multiply-add:**
+```asm
+    FMADD   R4, R1, R2, R3  ; R4 = R1 * R2 + R3 (single rounding)
+```
+
+**Vector dot product with FMA:**
+```asm
+    ; Compute dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
+    FMUL    R10, R1, R5     ; R10 = a[0] * b[0]
+    FMADD   R10, R2, R6, R10 ; R10 = a[1] * b[1] + R10
+    FMADD   R10, R3, R7, R10 ; R10 = a[2] * b[2] + R10
+    FMADD   R10, R4, R8, R10 ; R10 = a[3] * b[3] + R10
+```
+
+### 5.6 Shift Function Codes (Opcode 0x04)
 
 | FUNC | Binary | Hex | Mnemonic | Operation |
 |------|--------|-----|----------|-----------|
@@ -926,12 +1047,119 @@ Between warps:
 - No ordering guarantees without explicit synchronization
 - BAR instruction provides memory fence
 
-### 7.4 Atomics (Future Extension)
+### 7.4 Atomic Memory Operations
 
-Reserved opcodes 0x20-0x2F will include:
-- ATOM.ADD, ATOM.MIN, ATOM.MAX
-- ATOM.AND, ATOM.OR, ATOM.XOR
-- ATOM.EXCH, ATOM.CAS
+GPGPU-1 provides atomic read-modify-write operations for lock-free synchronization across threads and warps. Atomics serialize access to a single memory location.
+
+#### 7.4.1 Atomic Instructions
+
+| Opcode | Mnemonic | Function | Operation |
+|--------|----------|----------|-----------|
+| 0x30 | ATOM.ADD | Atomic Add | `*addr = *addr + value` |
+| 0x30 | ATOM.MIN | Atomic Minimum | `*addr = min(*addr, value)` |
+| 0x30 | ATOM.MAX | Atomic Maximum | `*addr = max(*addr, value)` |
+| 0x30 | ATOM.AND | Atomic Bitwise AND | `*addr = *addr & value` |
+| 0x30 | ATOM.OR | Atomic Bitwise OR | `*addr = *addr \| value` |
+| 0x30 | ATOM.XOR | Atomic Bitwise XOR | `*addr = *addr ^ value` |
+| 0x31 | ATOM.EXCH | Atomic Exchange | `*addr = value` (returns old) |
+| 0x32 | ATOM.CAS | Compare-And-Swap | `if (*addr == cmp) *addr = value` |
+
+**Note:** All atomics use function codes to select operation. Base opcode is 0x30-0x32.
+
+#### 7.4.2 Encoding
+
+**Format:** R-type with atomic function
+
+```
+ 31-26 | 25-21 | 20-16 | 15-11 | 10-6  | 5-3   | 2-0
+-------|-------|-------|-------|-------|-------|-------
+ 0x30  |  rd   |  rs1  |  rs2  | pred  | func  | unused
+ATOM   | dest  | addr  | value |  P0   | 3-bit | 000
+```
+
+**Atomic Functions:**
+- `000`: ADD
+- `001`: MIN (signed)
+- `010`: MAX (signed)
+- `011`: AND
+- `100`: OR
+- `101`: XOR
+- `110`: EXCH (opcode 0x31)
+- `111`: CAS (opcode 0x32, uses rs3 for compare)
+
+#### 7.4.3 Semantics
+
+**All Operations:**
+1. Load value from memory at address `rs1`
+2. Perform atomic operation with `rs2`
+3. Store result back to memory
+4. Optionally return old value to `rd`
+
+**Memory Ordering:**
+- Atomics within a warp execute serially
+- Atomics from different warps/cores serialize at memory controller
+- Acts as acquire-release barrier (no reordering across atomic)
+
+**Supported Memory Spaces:**
+- Global memory (GMEM)
+- Shared memory (SMEM)
+
+**Not supported:**
+- Local memory (atomics on thread-private data are meaningless)
+- Instruction memory (read-only)
+
+#### 7.4.4 Usage Example
+
+**Atomic Histogram:**
+```asm
+    ; Increment histogram bin atomically
+    ; R5 = bin_index, R6 = histogram base address
+    
+    MOVI    R7, 8           ; Element size (8 bytes)
+    MUL     R8, R5, R7      ; Offset = bin_index * 8
+    ADD     R8, R8, R6      ; Address = base + offset
+    
+    MOVI    R9, 1           ; Increment value
+    ATOM.ADD R0, R8, R9     ; histogram[bin_index] += 1
+```
+
+**Atomic Reduction:**
+```asm
+    ; Atomic sum reduction
+    ; R5 = partial_sum, R6 = global_sum_address
+    
+    ATOM.ADD R0, R6, R5     ; *global_sum += partial_sum
+```
+
+**Lock-Free Spin Lock:**
+```asm
+acquire_lock:
+    MOVI    R7, 0           ; Compare value (unlocked = 0)
+    MOVI    R8, 1           ; New value (locked = 1)
+    ATOM.CAS R9, R6, R7, R8 ; Try to acquire: if (*lock == 0) *lock = 1
+    SEQ     P1, R9, R7      ; P1 = (old_value == 0) -> success
+    BRC.FALSE P1, acquire_lock  ; Retry if failed
+    
+    ; Critical section here
+    
+release_lock:
+    MOVI    R8, 0           ; Unlock value
+    ATOM.EXCH R0, R6, R8    ; *lock = 0
+```
+
+#### 7.4.5 Performance Considerations
+
+- **Serialization:** Atomics from multiple threads to the same address serialize, reducing throughput
+- **Coalescing:** Atomics to adjacent addresses do NOT coalesce into wide transactions
+- **Bank Conflicts:** Shared memory atomics may have bank conflicts
+- **Alternatives:** Consider using warp-level reductions (SHFL) before atomics when possible
+
+#### 7.4.6 Implementation Notes
+
+The memory controller implements atomic operations using:
+1. Read-lock-write protocol for GMEM
+2. Direct atomic ALU for SMEM (no interconnect serialization)
+3. Scoreboarding to prevent overlapping atomics
 
 ---
 
@@ -1030,6 +1258,130 @@ BAR includes implicit memory fence. Explicit fence reserved for future:
 - MEMBAR.CTA: Thread block scope
 - MEMBAR.GPU: Device scope
 - MEMBAR.SYS: System scope
+
+### 9.3 Warp Shuffle Operations
+
+GPGPU-1 provides warp-level shuffle operations for efficient intra-warp communication without shared memory. All threads in a warp can exchange register values in a single cycle.
+
+#### 9.3.1 Shuffle Instruction Format
+
+**Opcode:** 0x34 (SHFL)
+
+**Syntax:** `SHFL.mode[.width] RD, RS1, RS2`
+
+**Encoding:**
+```
+ 31-26 | 25-21 | 20-16 | 15-11 | 10-8  | 7-5   | 4-2   | 1-0
+-------|-------|-------|-------|-------|-------|-------|-------
+ 0x34  |  rd   |  rs1  |  rs2  | pred  | width | func  | unused
+SHFL   | dest  | value | lane/d| P0    | 3-bit | 3-bit | 00
+```
+
+#### 9.3.2 Shuffle Modes
+
+| Mode | Func | Description | Source Lane Calculation |
+|------|------|-------------|------------------------|
+| SHFL.IDX | 000 | Indexed | `src_lane = rs2` |
+| SHFL.UP | 001 | Shift Up | `src_lane = tid - rs2` |
+| SHFL.DOWN | 010 | Shift Down | `src_lane = tid + rs2` |
+| SHFL.BFLY | 011 | Butterfly XOR | `src_lane = tid ^ rs2` |
+| SHFL.CLAMP | 100 | Indexed with clamp | `src_lane = clamp(rs2, 0, width-1)` |
+| SHFL.WRAP | 101 | Indexed with wrap | `src_lane = rs2 % width` |
+
+#### 9.3.3 Width Parameter
+
+The optional width parameter enables segmented shuffles within sub-groups of the warp:
+
+| Width | Encoding | Description |
+|-------|----------|-------------|
+| 8 (default) | 000 | Full warp shuffle |
+| 2 | 001 | 2-lane segments (4 segments) |
+| 4 | 010 | 4-lane segments (2 segments) |
+
+For segmented shuffles, each segment operates independently:
+- `SHFL.IDX.4 RD, RS1, R7` - Shuffle within 4-lane segments
+
+#### 9.3.4 Semantics
+
+**SHFL.IDX (Broadcast/Gather):**
+```
+RD[tid] = RS1[RS2]  // All threads get value from lane RS2
+```
+
+**SHFL.UP (Shift Up/Prefix):**
+```
+RD[tid] = (tid >= RS2) ? RS1[tid - RS2] : RS1[tid]
+```
+
+**SHFL.DOWN (Shift Down/Suffix):**
+```
+RD[tid] = (tid + RS2 < width) ? RS1[tid + RS2] : RS1[tid]
+```
+
+**SHFL.BFLY (Butterfly/Reduction):**
+```
+RD[tid] = RS1[tid ^ RS2]  // XOR pattern for parallel reduction
+```
+
+#### 9.3.5 Usage Examples
+
+**Broadcast lane 0 to all threads:**
+```asm
+    MOVI    R5, 0           ; Source lane = 0
+    SHFL.IDX R2, R1, R5     ; R2 = R1[0] for all threads
+```
+
+**Parallel reduction (sum) using butterfly:**
+```asm
+    ; Input: R1 contains partial values per thread
+    ; Output: All threads get the sum in R1
+    
+    MOVI    R5, 4
+    SHFL.BFLY R2, R1, R5    ; Exchange with lane tid^4
+    FADD    R1, R1, R2      ; Add values
+    
+    MOVI    R5, 2
+    SHFL.BFLY R2, R1, R5    ; Exchange with lane tid^2
+    FADD    R1, R1, R2
+    
+    MOVI    R5, 1
+    SHFL.BFLY R2, R1, R5    ; Exchange with lane tid^1
+    FADD    R1, R1, R2
+    
+    ; Now R1[all] = sum of original R1[0..7]
+```
+
+**Prefix sum (inclusive scan):**
+```asm
+    ; Input: R1 contains values
+    ; Output: R1[tid] = sum(R1[0..tid])
+    
+    MOVI    R5, 1
+    SHFL.UP R2, R1, R5      ; R2 = value from lane tid-1
+    FADD    R1, R1, R2      ; Add
+    
+    MOVI    R5, 2
+    SHFL.UP R2, R1, R5
+    FADD    R1, R1, R2
+    
+    MOVI    R5, 4
+    SHFL.UP R2, R1, R5
+    FADD    R1, R1, R2
+```
+
+**Segmented shuffle (2-lane segments):**
+```asm
+    ; Exchange with partner in 2-lane segments
+    MOVI    R5, 1
+    SHFL.BFLY.2 R2, R1, R5  ; Thread 0<->1, 2<->3, 4<->5, 6<->7
+```
+
+#### 9.3.6 Performance Considerations
+
+- **Latency:** 1 cycle (warp shuffle is synchronous within warp)
+- **Throughput:** 1 shuffle per cycle per warp
+- **No shared memory:** Shuffles don't use shared memory bandwidth
+- **Preferred for reductions:** Use SHFL.BFLY instead of atomics when reducing within a warp
 
 ---
 

@@ -76,7 +76,7 @@ endif
 # Targets
 #=============================================================================
 
-.PHONY: all clean compile test_decoder test_regfile test_alu test_scheduler test_lsu test_fetch test_core test_top test_memory test_system test_asm test_atomic test_fpu test_perf help
+.PHONY: all clean compile test_decoder test_regfile test_alu test_scheduler test_lsu test_fetch test_core test_top test_memory test_system test_asm test_atomic test_fpu test_perf test_scoreboard help
 
 all:
 	@echo "=============================================="
@@ -87,6 +87,7 @@ all:
 	@$(MAKE) test_regfile
 	@$(MAKE) test_alu
 	@$(MAKE) test_scheduler
+	@$(MAKE) test_scoreboard
 	@$(MAKE) test_lsu
 	@$(MAKE) test_atomic
 	@$(MAKE) test_fetch
@@ -254,6 +255,29 @@ else ifeq ($(SIM),vcs)
 	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_performance_counters \
 		$(addprefix ../,$(PKG_FILES) $(RTL_DIR)/core/performance_counters.sv $(TB_DIR)/tb_performance_counters.sv)
 	./$(BUILD_DIR)/tb_performance_counters | tee $(LOG_DIR)/tb_performance_counters.log
+else
+	@echo "Simulator $(SIM) not fully configured. Add support as needed."
+endif
+
+#-----------------------------------------------------------------------------
+# Scoreboard Test (Data Hazard Detection)
+#-----------------------------------------------------------------------------
+
+test_scoreboard: $(BUILD_DIR) $(LOG_DIR)
+	@echo "=============================================="
+	@echo "[SCOREBOARD] DATA HAZARD DETECTION TEST"
+	@echo "=============================================="
+ifeq ($(SIM),verilator)
+	@echo "[COMPILE] Compiling scoreboard testbench..."
+	$(COMPILE) $(CFLAGS) --top-module tb_scoreboard \
+		$(PKG_FILES) $(RTL_DIR)/core/warp_scheduler.sv $(TB_DIR)/tb_scoreboard.sv \
+		-o $(CURDIR)/$(BUILD_DIR)/tb_scoreboard
+	@echo "[RUN] Running scoreboard tests..."
+	./$(BUILD_DIR)/tb_scoreboard | tee $(LOG_DIR)/tb_scoreboard.log
+else ifeq ($(SIM),vcs)
+	cd $(BUILD_DIR) && $(COMPILE) $(CFLAGS) -o tb_scoreboard \
+		$(addprefix ../,$(PKG_FILES) $(RTL_DIR)/core/warp_scheduler.sv $(TB_DIR)/tb_scoreboard.sv)
+	./$(BUILD_DIR)/tb_scoreboard | tee $(LOG_DIR)/tb_scoreboard.log
 else
 	@echo "Simulator $(SIM) not fully configured. Add support as needed."
 endif

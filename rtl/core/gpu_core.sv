@@ -218,6 +218,34 @@ module gpu_core
     warp_state_t                    sched_warp_state;
     logic [NUM_WARPS-1:0]           warps_at_barrier;
     
+    //=========================================================================
+    // Internal Signals - Scoreboard (Data Hazard Detection)
+    //=========================================================================
+    
+    // Hazard check at decode stage
+    logic                           scoreboard_check_valid;
+    logic [WARP_ID_WIDTH-1:0]       scoreboard_check_warp_id;
+    logic [REG_ADDR_WIDTH-1:0]      scoreboard_check_rs1;
+    logic [REG_ADDR_WIDTH-1:0]      scoreboard_check_rs2;
+    logic                           scoreboard_check_rs1_en;
+    logic                           scoreboard_check_rs2_en;
+    logic                           scoreboard_hazard_detected;
+    
+    // Register reservation at issue (decode->operand transition)
+    logic                           scoreboard_reserve_valid;
+    logic [WARP_ID_WIDTH-1:0]       scoreboard_reserve_warp_id;
+    logic [REG_ADDR_WIDTH-1:0]      scoreboard_reserve_rd;
+    logic                           scoreboard_reserve_rd_en;
+    
+    // Register completion at writeback
+    logic                           scoreboard_complete_valid;
+    logic [WARP_ID_WIDTH-1:0]       scoreboard_complete_warp_id;
+    logic [REG_ADDR_WIDTH-1:0]      scoreboard_complete_rd;
+    
+    // Warp clear on termination
+    logic                           scoreboard_clear_warp;
+    logic [WARP_ID_WIDTH-1:0]       scoreboard_clear_warp_id;
+    
     // Stall signals
     logic                           stall_fetch;
     logic                           stall_decode;
@@ -294,12 +322,74 @@ module gpu_core
     // Stall Logic
     //=========================================================================
     
+    // Data hazard stall - stall decode stage if RAW hazard detected
+    logic stall_hazard;
+    assign stall_hazard = scoreboard_hazard_detected;
+    
     assign stall_fetch     = !fetch_decode_ready;
-    assign stall_decode    = !decode_operand_ready;
+    assign stall_decode    = !decode_operand_ready || stall_hazard;
     assign stall_operand   = !operand_exec_ready;
     assign stall_execute   = !exec_mem_ready;
     assign stall_memory    = !lsu_req_ready;
     assign stall_writeback = 1'b0;  // Writeback never stalls
+    
+    //=========================================================================
+    // Scoreboard Instance (Data Hazard Detection)
+    //=========================================================================
+    
+    // Hazard check: Check at decode stage before issuing instruction
+    assign scoreboard_check_valid    = f2d_valid && decode_valid_raw && !illegal_instr_raw;
+    assign scoreboard_check_warp_id  = f2d_warp_id;
+    assign scoreboard_check_rs1      = decoded_raw.rs1;
+    assign scoreboard_check_rs2      = decoded_raw.rs2;
+    assign scoreboard_check_rs1_en   = decoded_raw.rs1_en;
+    assign scoreboard_check_rs2_en   = decoded_raw.rs2_en && !decoded_raw.imm_en;
+    
+    // Reservation: Reserve destination register when instruction advances to operand stage
+    assign scoreboard_reserve_valid   = d2o_valid && !stall_operand && !warp_flush[d2o_warp_id];
+    assign scoreboard_reserve_warp_id = d2o_warp_id;
+    assign scoreboard_reserve_rd      = d2o_decoded.rd;
+    assign scoreboard_reserve_rd_en   = d2o_decoded.rd_en;
+    
+    // Completion: Clear scoreboard entry when writeback completes
+    assign scoreboard_complete_valid   = m2w_valid && m2w_rd_en;
+    assign scoreboard_complete_warp_id = m2w_warp_id;
+    assign scoreboard_complete_rd      = m2w_rd;
+    
+    // Clear warp's scoreboard on termination (EXIT instruction)
+    assign scoreboard_clear_warp    = o2e_valid && o2e_decoded.is_exit;
+    assign scoreboard_clear_warp_id = o2e_warp_id;
+    
+    scoreboard #(
+        .NUM_WARPS(NUM_WARPS)
+    ) u_scoreboard (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        
+        // Hazard check
+        .check_valid      (scoreboard_check_valid),
+        .check_warp_id    (scoreboard_check_warp_id),
+        .check_rs1        (scoreboard_check_rs1),
+        .check_rs2        (scoreboard_check_rs2),
+        .check_rs1_en     (scoreboard_check_rs1_en),
+        .check_rs2_en     (scoreboard_check_rs2_en),
+        .hazard_detected  (scoreboard_hazard_detected),
+        
+        // Register reservation
+        .reserve_valid    (scoreboard_reserve_valid),
+        .reserve_warp_id  (scoreboard_reserve_warp_id),
+        .reserve_rd       (scoreboard_reserve_rd),
+        .reserve_rd_en    (scoreboard_reserve_rd_en),
+        
+        // Completion
+        .complete_valid   (scoreboard_complete_valid),
+        .complete_warp_id (scoreboard_complete_warp_id),
+        .complete_rd      (scoreboard_complete_rd),
+        
+        // Clear warp
+        .clear_warp       (scoreboard_clear_warp),
+        .clear_warp_id    (scoreboard_clear_warp_id)
+    );
     
     //=========================================================================
     // Warp Scheduler Instance
