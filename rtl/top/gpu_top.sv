@@ -763,6 +763,8 @@ module memory_arbiter
     // Current grant
     logic [$clog2(NUM_CORES)-1:0] granted_core;
     logic                         is_imem_req;
+    logic [ADDR_WIDTH-1:0]        imem_req_addr_r;  // Saved imem request address
+    logic [ADDR_WIDTH-1:0]        write_addr_r;     // Saved write address for data positioning
     
     // Round-robin priority
     logic [$clog2(NUM_CORES)-1:0] rr_priority;
@@ -806,25 +808,33 @@ module memory_arbiter
     
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state        <= ARB_IDLE;
-            granted_core <= '0;
-            is_imem_req  <= 1'b0;
-            rr_priority  <= '0;
+            state           <= ARB_IDLE;
+            granted_core    <= '0;
+            is_imem_req     <= 1'b0;
+            rr_priority     <= '0;
+            imem_req_addr_r <= '0;
+            write_addr_r    <= '0;
         end else begin
             case (state)
                 ARB_IDLE: begin
                     // Priority: instruction fetch > data read > data write
                     if (any_imem) begin
-                        granted_core <= find_next_req(imem_req, rr_priority);
-                        is_imem_req  <= 1'b1;
-                        state        <= ARB_IMEM_REQ;
+                        automatic logic [$clog2(NUM_CORES)-1:0] next_core;
+                        next_core = find_next_req(imem_req, rr_priority);
+                        granted_core    <= next_core;
+                        is_imem_req     <= 1'b1;
+                        imem_req_addr_r <= core_imem_req_addr[next_core];  // Save request address
+                        state           <= ARB_IMEM_REQ;
                     end else if (any_data_read) begin
                         granted_core <= find_next_req(data_read_req, rr_priority);
                         is_imem_req  <= 1'b0;
                         state        <= ARB_READ_ADDR;
                     end else if (any_data_write) begin
-                        granted_core <= find_next_req(data_write_req, rr_priority);
+                        automatic logic [$clog2(NUM_CORES)-1:0] next_core;
+                        next_core = find_next_req(data_write_req, rr_priority);
+                        granted_core <= next_core;
                         is_imem_req  <= 1'b0;
+                        write_addr_r <= core_awaddr[next_core];  // Save write address
                         state        <= ARB_WRITE_ADDR;
                     end
                 end
@@ -929,10 +939,13 @@ module memory_arbiter
             end
             
             ARB_WRITE_DATA: begin
+                automatic logic [5:0] byte_offset;
+                byte_offset = write_addr_r[5:0];  // Byte offset within 64-byte (512-bit) word
+                
                 axi_wvalid = core_wvalid[granted_core];
-                // Expand 64-bit to 512-bit (place in correct position)
-                axi_wdata  = {448'b0, core_wdata[granted_core]};
-                axi_wstrb  = {56'b0, core_wstrb[granted_core]};
+                // Expand 64-bit to 512-bit (place in correct position based on address)
+                axi_wdata  = core_wdata[granted_core] << (byte_offset * 8);
+                axi_wstrb  = core_wstrb[granted_core] << byte_offset;
                 axi_wlast  = core_wlast[granted_core];
             end
             
@@ -1012,7 +1025,13 @@ module memory_arbiter
             
             ARB_IMEM_RESP: begin
                 core_imem_resp_valid[granted_core] = axi_rvalid;
-                core_imem_resp_data[granted_core]  = axi_rdata[255:0];  // Lower 256 bits
+                // Select correct 256-bit half based on bit 5 of the address
+                // (32-byte cache lines within 64-byte memory words)
+                if (imem_req_addr_r[5]) begin
+                    core_imem_resp_data[granted_core] = axi_rdata[511:256];  // Upper 256 bits
+                end else begin
+                    core_imem_resp_data[granted_core] = axi_rdata[255:0];    // Lower 256 bits
+                end
             end
             
             default: begin

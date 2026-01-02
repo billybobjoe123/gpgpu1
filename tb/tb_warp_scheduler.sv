@@ -66,6 +66,10 @@ module tb_warp_scheduler;
     logic                            diverge_pop;
     logic [WARP_ID_WIDTH-1:0]        diverge_pop_warp_id;
     
+    // Early divergence detection (from decode stage)
+    logic                            decode_is_diverge;
+    logic [WARP_ID_WIDTH-1:0]        decode_diverge_warp_id;
+    
     // Barrier interface
     logic                            barrier_arrive;
     logic [WARP_ID_WIDTH-1:0]        barrier_warp_id;
@@ -143,6 +147,8 @@ module tb_warp_scheduler;
         .diverge_else_warp_id(diverge_else_warp_id),
         .diverge_pop        (diverge_pop),
         .diverge_pop_warp_id(diverge_pop_warp_id),
+        .decode_is_diverge  (decode_is_diverge),
+        .decode_diverge_warp_id(decode_diverge_warp_id),
         .barrier_arrive     (barrier_arrive),
         .barrier_warp_id    (barrier_warp_id),
         .barrier_id         (barrier_id),
@@ -290,6 +296,8 @@ module tb_warp_scheduler;
         diverge_else_warp_id = 0;
         diverge_pop = 0;
         diverge_pop_warp_id = 0;
+        decode_is_diverge = 0;
+        decode_diverge_warp_id = 0;
         
         // Barrier
         barrier_arrive = 0;
@@ -392,7 +400,8 @@ module tb_warp_scheduler;
         $display("\nTest 3: PC update from fetch unit");
         // Warp 0 was scheduled in Test 2. The auto PC update block should
         // have sent PC update on the next cycle. Wait for it to take effect.
-        repeat(3) @(posedge clk);
+        // With the delay in clearing warps_in_flight, we need extra cycles.
+        repeat(4) @(posedge clk);
         #1;
         // Warp 0 should now have PC = 0x1004 (original 0x1000 + 4)
         check_result("PC advanced to 0x1004", sched_valid && sched_warp_id == 0 && sched_pc == 64'h1004);

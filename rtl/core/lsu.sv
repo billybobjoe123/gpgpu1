@@ -611,6 +611,7 @@ module lsu
     input  logic                                      gmem_req_ready,
     input  logic                                      gmem_resp_valid,
     input  logic [DATA_WIDTH-1:0]                     gmem_resp_rdata,
+    input  logic                                      gmem_store_complete,
     
     // Shared memory interface
     output logic                                      smem_req_valid,
@@ -882,7 +883,9 @@ module lsu
                 end
                 
                 LSU_WAIT_GLOBAL: begin
-                    if (gmem_resp_valid || is_store_r) begin
+                    // For loads: wait for gmem_resp_valid
+                    // For stores: wait for gmem_store_complete (AXI write response)
+                    if (gmem_resp_valid || (is_store_r && gmem_store_complete)) begin
                         // Store response data
                         if (is_load_r) begin
                             if (is_64bit_r) begin

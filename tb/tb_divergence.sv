@@ -276,6 +276,8 @@ module tb_divergence;
             
             if (axi_wvalid && axi_wready && axi_wlast) begin
                 mem_wr_data_done <= 1'b1;
+                $display("t=%0t MEM_WRITE: addr=0x%h word_idx=%0d wdata=0x%h wstrb=0x%h",
+                         $time, mem_wr_addr, mem_wr_addr >> 6, axi_wdata, axi_wstrb);
                 for (int b = 0; b < 64; b++) begin
                     if (axi_wstrb[b]) begin
                         memory[mem_wr_addr >> 6][b*8 +: 8] <= axi_wdata[b*8 +: 8];
@@ -512,6 +514,33 @@ module tb_divergence;
         #200000;  // 200us timeout
         $display("ERROR: Simulation timeout!");
         $finish;
+    end
+    
+    //=========================================================================
+    // Debug Monitor
+    //=========================================================================
+    
+    // Monitor AXI transactions
+    always @(posedge clk) begin
+        if (axi_arvalid && axi_arready) begin
+            $display("t=%0t: AXI AR: addr=0x%h, len=%0d, id=%0d", 
+                     $time, axi_araddr, axi_arlen, axi_arid);
+        end
+        if (axi_rvalid && axi_rready) begin
+            $display("t=%0t: AXI R: data_lo=0x%h data_hi=0x%h last=%b id=%0d",
+                     $time, axi_rdata[255:0], axi_rdata[511:256], axi_rlast, axi_rid);
+        end
+        if (axi_awvalid && axi_awready) begin
+            $display("t=%0t: AXI AW: addr=0x%h, len=%0d",
+                     $time, axi_awaddr, axi_awlen);
+        end
+    end
+    
+    // Monitor gpu status
+    always @(posedge clk) begin
+        if (rst_n && $time > 100) begin
+            $display("t=%0t: cmd_v=%b rdy=%b busy=%b done=%b", $time, cmd_valid, cmd_ready, gpu_busy, gpu_done);
+        end
     end
 
 endmodule

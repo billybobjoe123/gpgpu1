@@ -77,6 +77,10 @@ module warp_scheduler
     input  logic                            diverge_pop,
     input  logic [WARP_ID_WIDTH-1:0]        diverge_pop_warp_id,
     
+    // Early divergence detection (from decode stage)
+    input  logic                            decode_is_diverge,
+    input  logic [WARP_ID_WIDTH-1:0]        decode_diverge_warp_id,
+    
     //=========================================================================
     // Barrier Interface
     //=========================================================================
@@ -129,6 +133,13 @@ module warp_scheduler
     // Track warps with in-flight instructions (waiting for fetch to complete)
     logic [NUM_WARPS-1:0] warps_in_flight;
     
+    // Track warps with divergence instruction in pipeline (waiting for mask update)
+    logic [NUM_WARPS-1:0] warps_diverge_pending;
+    
+    // Delayed pc_update signals (for one-cycle delay in clearing warps_in_flight)
+    logic                     pc_update_valid_r;
+    logic [WARP_ID_WIDTH-1:0] pc_update_warp_id_r;
+    
     // Pipeline stall combined
     logic pipeline_stall;
     assign pipeline_stall = stall_fetch | stall_decode | stall_operand | 
@@ -145,10 +156,12 @@ module warp_scheduler
             // 2. It is not waiting at a barrier
             // 3. It has at least one active thread
             // 4. It does not have an instruction in-flight
+            // 5. It does not have a divergence instruction pending mask update
             warps_ready[w] = warp_state[w].active && 
                              !warp_state[w].at_barrier &&
                              (|warp_state[w].active_mask) &&
-                             !warps_in_flight[w];
+                             !warps_in_flight[w] &&
+                             !warps_diverge_pending[w];
         end
     end
     
@@ -196,6 +209,26 @@ module warp_scheduler
         sched_warp_state = warp_state[selected_warp];
     end
     
+    // Debug output
+    `ifdef DEBUG_SCHEDULER
+    always @(posedge clk) begin
+        if (rst_n) begin
+            $display("t=%0t SCHED: warp_found=%b stall=%b(f=%b d=%b o=%b e=%b m=%b w=%b) active=%b in_flight=%b ready=%b",
+                     $time, warp_found, pipeline_stall, 
+                     stall_fetch, stall_decode, stall_operand, stall_execute, stall_memory, stall_writeback,
+                     warps_active, warps_in_flight, warps_ready);
+            if (sched_valid && sched_ready) begin
+                $display("t=%0t SCHED: DISPATCH warp=%0d pc=0x%h mask=%b",
+                         $time, sched_warp_id, sched_pc, sched_active_mask);
+            end
+            if (warp_activate) begin
+                $display("t=%0t SCHED: ACTIVATE warp=%0d pc=0x%h mask=%b",
+                         $time, warp_activate_id, warp_activate_pc, warp_activate_mask);
+            end
+        end
+    end
+    `endif
+    
     //=========================================================================
     // Warp State Update Logic
     //=========================================================================
@@ -216,6 +249,9 @@ module warp_scheduler
             end
             priority_warp <= '0;
             warps_in_flight <= '0;
+            warps_diverge_pending <= '0;
+            pc_update_valid_r <= 1'b0;
+            pc_update_warp_id_r <= '0;
             
         end else begin
             //=================================================================
@@ -226,14 +262,38 @@ module warp_scheduler
                 warps_in_flight[selected_warp] <= 1'b1;
             end
             
-            // Clear in-flight when PC update comes (instruction entered pipeline)
-            if (pc_update_valid) begin
-                warps_in_flight[pc_update_warp_id] <= 1'b0;
+            // Delay clearing in-flight by one cycle to allow decode_is_diverge to set
+            // warps_diverge_pending first. Use registered pc_update signals.
+            if (pc_update_valid_r) begin
+                warps_in_flight[pc_update_warp_id_r] <= 1'b0;
             end
+            
+            // Register pc_update for delayed clearing
+            pc_update_valid_r <= pc_update_valid;
+            pc_update_warp_id_r <= pc_update_warp_id;
             
             // Also clear in-flight on warp exit
             if (warp_exit) begin
                 warps_in_flight[warp_exit_id] <= 1'b0;
+            end
+            
+            //=================================================================
+            // Divergence Instruction Tracking
+            //=================================================================
+            // Mark warp as having divergence pending when PUSH/ELSE/POP is decoded
+            if (decode_is_diverge) begin
+                warps_diverge_pending[decode_diverge_warp_id] <= 1'b1;
+            end
+            
+            // Clear divergence pending when the corresponding diverge signal fires
+            if (diverge_push) begin
+                warps_diverge_pending[diverge_warp_id] <= 1'b0;
+            end
+            if (diverge_else) begin
+                warps_diverge_pending[diverge_else_warp_id] <= 1'b0;
+            end
+            if (diverge_pop) begin
+                warps_diverge_pending[diverge_pop_warp_id] <= 1'b0;
             end
             
             //=================================================================

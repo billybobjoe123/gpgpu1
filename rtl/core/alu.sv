@@ -545,6 +545,7 @@ module execution_unit
     input  logic [WARP_SIZE-1:0][DATA_WIDTH-1:0]   operand_b,
     input  logic [WARP_SIZE-1:0]                   pred_a,      // For predicate ops
     input  logic [WARP_SIZE-1:0]                   pred_b,
+    input  logic [WARP_SIZE-1:0][DATA_WIDTH-1:0]   special_data, // Special register data for MOVSR
     
     // Control
     input  exec_unit_t                             exec_select, // Which unit to use
@@ -659,12 +660,19 @@ module execution_unit
     
     always_comb begin
         case (exec_select)
-            EX_ALU:   result = alu_result;
-            EX_SHIFT: result = shift_result;
-            EX_MUL:   result = mul_result;
-            EX_FPU:   result = fpu_result;
-            EX_CMP:   result = '0;  // Compare outputs to pred_result
-            default:  result = '0;
+            EX_ALU:     result = alu_result;
+            EX_SHIFT:   result = shift_result;
+            EX_MUL:     result = mul_result;
+            EX_FPU:     result = fpu_result;
+            EX_CMP:     result = '0;  // Compare outputs to pred_result
+            EX_SPECIAL: result = special_data;  // MOVSR uses special register data
+            EX_LSU: begin
+                // For load/store: compute address = base + offset
+                for (int t = 0; t < WARP_SIZE; t++) begin
+                    result[t] = operand_a[t] + operand_b[t];
+                end
+            end
+            default:    result = '0;
         endcase
         
         // Select predicate result based on execution unit

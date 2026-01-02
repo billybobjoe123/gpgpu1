@@ -568,6 +568,18 @@ module fetch_unit
         end
     end
     
+    // Debug output
+    `ifdef DEBUG_FETCH
+    always @(posedge clk) begin
+        if (rst_n) begin
+            $display("t=%0t FETCH: state=%0d sched_v=%b sched_rdy=%b fbuf_full=%b icache_busy=%b sched_mask=%b fetch_mask=%b",
+                     $time, state, sched_valid, sched_ready, fbuf_full, icache_busy, sched_active_mask, fetch_mask);
+            $display("t=%0t FETCH: decode_v=%b decode_rdy=%b fbuf_count=%0d instr=0x%h pc=0x%h decode_mask=%b",
+                     $time, decode_valid, decode_ready, fbuf_count, decode_instr, decode_pc, decode_active_mask);
+        end
+    end
+    `endif
+    
     //=========================================================================
     // Output Logic
     //=========================================================================

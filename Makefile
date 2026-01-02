@@ -607,6 +607,7 @@ test_divergence: $(BUILD_DIR) $(LOG_DIR)
 ifeq ($(SIM),verilator)
 	@echo "[COMPILE] Compiling divergence testbench..."
 	$(COMPILE) $(CFLAGS) --top-module tb_divergence \
+		-DDEBUG_SCHEDULER -DDEBUG_FETCH -DDEBUG_PIPELINE -DDEBUG_GMEM \
 		$(PKG_FILES) $(RTL_FILES) $(TB_DIR)/tb_divergence.sv \
 		-o $(CURDIR)/$(BUILD_DIR)/tb_divergence
 	@echo "[RUN] Running divergence tests..."

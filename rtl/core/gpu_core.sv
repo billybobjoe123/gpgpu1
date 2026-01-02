@@ -192,6 +192,7 @@ module gpu_core
     logic                           lsu_gmem_req_ready;
     logic                           lsu_gmem_resp_valid;
     logic [DATA_WIDTH-1:0]          lsu_gmem_resp_rdata;
+    logic                           lsu_gmem_store_complete;
     
     //=========================================================================
     // Internal Signals - Writeback Stage
@@ -282,6 +283,10 @@ module gpu_core
     logic                           diverge_pop;
     logic [WARP_ID_WIDTH-1:0]       diverge_pop_warp_id;
     
+    // Early divergence detection (from decode stage)
+    logic                           decode_is_diverge;
+    logic [WARP_ID_WIDTH-1:0]       decode_diverge_warp_id;
+    
     // Barrier control
     logic                           barrier_arrive;
     logic [WARP_ID_WIDTH-1:0]       barrier_warp_id;
@@ -316,7 +321,9 @@ module gpu_core
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] o2e_rs1_data;
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] o2e_rs2_data;
     logic [WARP_SIZE-1:0]           o2e_pred_data;
-    
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] o2e_sr_data;  // Special register data
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] o2e_store_data;  // Store data from RD register for ST instructions
+
     // Execute -> Memory/Writeback pipeline register
     logic                           e2m_valid;
     decoded_instr_t                 e2m_decoded;
@@ -325,6 +332,7 @@ module gpu_core
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] e2m_result;
     logic [WARP_SIZE-1:0]           e2m_pred_result;
     logic                           e2m_is_mem;
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] e2m_store_data;  // Store data for ST instructions
     
     // Memory -> Writeback pipeline register
     logic                           m2w_valid;
@@ -359,6 +367,8 @@ module gpu_core
     assign stall_decode    = !decode_operand_ready || stall_hazard;
     assign stall_operand   = !operand_exec_ready || fwd_stall_required;
     assign stall_execute   = !exec_mem_ready;
+    // Memory stage stalls when LSU is busy processing any memory operation
+    // This ensures all thread stores complete before subsequent instructions advance
     assign stall_memory    = !lsu_req_ready;
     assign stall_writeback = 1'b0;  // Writeback never stalls
     
@@ -467,6 +477,8 @@ module gpu_core
         .diverge_else_warp_id(diverge_else_warp_id),
         .diverge_pop         (diverge_pop),
         .diverge_pop_warp_id (diverge_pop_warp_id),
+        .decode_is_diverge   (decode_is_diverge),
+        .decode_diverge_warp_id(decode_diverge_warp_id),
         
         // Barrier
         .barrier_arrive      (barrier_arrive),
@@ -588,6 +600,11 @@ module gpu_core
     assign decode_operand_mask    = f2d_mask;
     assign decode_illegal         = illegal_instr_raw;
     
+    // Early divergence detection - tell scheduler when a PUSH/ELSE/POP is decoded
+    assign decode_is_diverge = decode_valid_raw && !illegal_instr_raw && 
+                               (decoded_raw.is_push || decoded_raw.is_else || decoded_raw.is_pop);
+    assign decode_diverge_warp_id = f2d_warp_id;
+    
     //=========================================================================
     // Decode -> Operand Pipeline Register
     //=========================================================================
@@ -619,6 +636,15 @@ module gpu_core
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] rf_rs1_data;
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] rf_rs2_data;
     
+    // For store instructions, use RD field as store data source (via RS2 port)
+    logic [REG_ADDR_WIDTH-1:0] rf_rs2_addr;
+    logic is_store_instr;
+    assign is_store_instr = (d2o_decoded.opcode == OP_ST) || 
+                            (d2o_decoded.opcode == OP_ST32) ||
+                            (d2o_decoded.opcode == OP_STS) ||
+                            (d2o_decoded.opcode == OP_STS32);
+    assign rf_rs2_addr = is_store_instr ? d2o_decoded.rd : d2o_decoded.rs2;
+    
     register_file #(
         .NUM_WARPS(NUM_WARPS)
     ) u_register_file (
@@ -629,7 +655,7 @@ module gpu_core
         .warp_id    (d2o_warp_id),
         .rs1_addr   (d2o_decoded.rs1),
         .rs1_data   (rf_rs1_data),
-        .rs2_addr   (d2o_decoded.rs2),
+        .rs2_addr   (rf_rs2_addr),  // Use RD for stores, RS2 otherwise
         .rs2_data   (rf_rs2_data),
         
         // Write port - from writeback stage
@@ -674,8 +700,49 @@ module gpu_core
     assign pf_pred_a = pf_pred_data;
     
     //=========================================================================
+    // Special Register File Instance
+    //=========================================================================
+    
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] sr_data;
+    logic [127:0] clock_counter;
+    block_config_t block_config;
+    
+    // Clock counter for special registers
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            clock_counter <= '0;
+        else
+            clock_counter <= clock_counter + 1;
+    end
+    
+    // Connect block configuration (defaults for now - would come from dispatch unit)
+    assign block_config.block_id_x   = '0;
+    assign block_config.block_id_y   = '0;
+    assign block_config.block_id_z   = '0;
+    assign block_config.num_threads  = WARP_SIZE;
+    assign block_config.num_blocks_x = 1;
+    assign block_config.num_blocks_y = 1;
+    assign block_config.num_blocks_z = 1;
+    
+    special_register_file #(
+        .CORE_ID(CORE_ID)
+    ) u_special_register_file (
+        .clk           (clk),
+        .rst_n         (rst_n),
+        .warp_id       (d2o_warp_id),
+        .block_config  (block_config),
+        .sr_addr       (d2o_decoded.rs1[3:0]),  // SR address is in RS1 field
+        .sr_data       (sr_data),
+        .clock_counter (clock_counter)
+    );
+    
+    //=========================================================================
     // Forwarding Network Instance
     //=========================================================================
+    
+    // For stores, use RD as the source register for RS2 port
+    logic store_rs2_en;
+    assign store_rs2_en = is_store_instr;  // Store needs to read from RD
     
     forwarding_network #(
         .NUM_WARPS(NUM_WARPS)
@@ -687,9 +754,9 @@ module gpu_core
         .operand_valid      (d2o_valid),
         .operand_warp_id    (d2o_warp_id),
         .operand_rs1        (d2o_decoded.rs1),
-        .operand_rs2        (d2o_decoded.rs2),
+        .operand_rs2        (rf_rs2_addr),  // Use RD for stores
         .operand_rs1_en     (d2o_decoded.rs1_en),
-        .operand_rs2_en     (d2o_decoded.rs2_en && !d2o_decoded.imm_en),
+        .operand_rs2_en     ((d2o_decoded.rs2_en && !d2o_decoded.imm_en) || store_rs2_en),
         
         // Register file data
         .rf_rs1_data        (rf_rs1_data),
@@ -750,6 +817,8 @@ module gpu_core
             o2e_rs1_data  <= '0;
             o2e_rs2_data  <= '0;
             o2e_pred_data <= '0;
+            o2e_sr_data   <= '0;
+            o2e_store_data <= '0;
         end else if (warp_flush[d2o_warp_id]) begin
             o2e_valid <= 1'b0;
         end else if (!stall_execute && !stall_operand) begin
@@ -759,27 +828,37 @@ module gpu_core
             o2e_warp_id   <= d2o_warp_id;
             o2e_mask      <= d2o_mask;
             
-            // Operand selection: use forwarded data with immediate override
+            // Operand selection for address computation (operand B):
+            // - For stores: immediate is the offset, store data comes from RD (via o2e_store_data)
+            // - For loads: immediate is the offset
+            // - For other imm_en instructions: immediate is the operand
             if (d2o_decoded.imm_en) begin
-                // Use immediate for operand B
+                // Use immediate for operand B (for address calculation on loads/stores, 
+                // or as actual operand for other immediate instructions)
                 for (int t = 0; t < WARP_SIZE; t++) begin
                     o2e_rs2_data[t] <= d2o_decoded.imm;
                 end
             end else begin
-                // Use forwarded RS2 data (forwarding network handles muxing)
+                // Use forwarded RS2 data
                 o2e_rs2_data <= fwd_rs2_data;
             end
+            
+            // Capture store data from RD register (read via RS2 port when is_store_instr)
+            // fwd_rs2_data contains rd value because rf_rs2_addr selects rd for stores
+            o2e_store_data <= is_store_instr ? fwd_rs2_data : '0;
             
             // Use forwarded RS1 data (forwarding network handles muxing)
             o2e_rs1_data  <= fwd_rs1_data;
             o2e_pred_data <= pf_pred_data;
+            o2e_sr_data   <= sr_data;  // Special register data for MOVSR
         end else if (stall_operand && !stall_execute) begin
             // Clear valid if operand stage is stalled but execute stage can accept
             o2e_valid <= 1'b0;
         end
     end
     
-    assign operand_exec_ready = !stall_execute && !stall_operand;
+    // Operand stage can pass to execute when execute is not stalled
+    assign operand_exec_ready = !stall_execute;
     
     //=========================================================================
     // Execution Unit Instance
@@ -803,24 +882,25 @@ module gpu_core
     end
     
     execution_unit u_execution_unit (
-        .clk         (clk),
-        .rst_n       (rst_n),
+        .clk          (clk),
+        .rst_n        (rst_n),
         
-        .operand_a   (o2e_rs1_data),
-        .operand_b   (o2e_rs2_data),
-        .pred_a      (pf_pred_a),
-        .pred_b      (pf_pred_b),
+        .operand_a    (o2e_rs1_data),
+        .operand_b    (o2e_rs2_data),
+        .pred_a       (pf_pred_a),
+        .pred_b       (pf_pred_b),
+        .special_data (o2e_sr_data),  // Special register data for MOVSR
         
-        .exec_select (o2e_decoded.exec_unit),
-        .opcode      (o2e_decoded.opcode),
-        .func        (o2e_decoded.func),
-        .active_mask (exec_active_mask),
-        .valid_in    (o2e_valid),
+        .exec_select  (o2e_decoded.exec_unit),
+        .opcode       (o2e_decoded.opcode),
+        .func         (o2e_decoded.func),
+        .active_mask  (exec_active_mask),
+        .valid_in     (o2e_valid),
         
-        .result      (exec_result),
-        .pred_result (exec_pred_result),
-        .valid_out   (exec_valid_out),
-        .ready       (exec_ready)
+        .result       (exec_result),
+        .pred_result  (exec_pred_result),
+        .valid_out    (exec_valid_out),
+        .ready        (exec_ready)
     );
     
     //=========================================================================
@@ -912,6 +992,7 @@ module gpu_core
             e2m_result      <= '0;
             e2m_pred_result <= '0;
             e2m_is_mem      <= 1'b0;
+            e2m_store_data  <= '0;
         end else if (warp_flush[o2e_warp_id]) begin
             e2m_valid <= 1'b0;
         end else if (!stall_memory) begin
@@ -923,6 +1004,7 @@ module gpu_core
             e2m_result      <= exec_result;
             e2m_pred_result <= exec_pred_result;
             e2m_is_mem      <= mem_op_flag;
+            e2m_store_data  <= o2e_store_data;  // Store data from RD register (captured in o2e stage)
         end
     end
     
@@ -957,7 +1039,7 @@ module gpu_core
         .req_rd          (e2m_decoded.rd),
         .req_base_addr   (e2m_result),  // Address calculated in execute
         .req_offset      (13'b0),  // Offset already applied
-        .req_store_data  (o2e_rs2_data),  // Store data from RS2
+        .req_store_data  (e2m_store_data),  // Store data (captured from RD register)
         .req_ready       (lsu_req_ready),
         
         // Response interface
@@ -977,6 +1059,7 @@ module gpu_core
         .gmem_req_ready  (lsu_gmem_req_ready),
         .gmem_resp_valid (lsu_gmem_resp_valid),
         .gmem_resp_rdata (lsu_gmem_resp_rdata),
+        .gmem_store_complete (lsu_gmem_store_complete),
         
         // Shared memory interface
         .smem_req_valid  (smem_req_valid),
@@ -1120,6 +1203,7 @@ module gpu_core
     assign lsu_gmem_req_ready = (gmem_state == GMEM_IDLE);
     assign lsu_gmem_resp_valid = gmem_rvalid && (gmem_state == GMEM_READ_DATA);
     assign lsu_gmem_resp_rdata = gmem_rdata;
+    assign lsu_gmem_store_complete = gmem_bvalid && (gmem_state == GMEM_WRITE_RESP);
     
     //=========================================================================
     // Memory -> Writeback Pipeline Register
@@ -1191,5 +1275,85 @@ module gpu_core
     assign core_busy = fetch_busy || |warps_active || 
                        f2d_valid || d2o_valid || o2e_valid || 
                        e2m_valid || m2w_valid;
+
+    //=========================================================================
+    // Debug: Pipeline Trace
+    //=========================================================================
+    
+    `ifdef DEBUG_PIPELINE
+    always_ff @(posedge clk) begin
+        if (rst_n) begin
+            // Only print when something is happening
+            if (fetch_decode_valid || f2d_valid || d2o_valid || o2e_valid || e2m_valid || m2w_valid) begin
+                $display("t=%0t PIPE: f_dv=%b f2d=%b d2o=%b o2e=%b e2m=%b m2w=%b | stall(d=%b o=%b e=%b m=%b) | opc=%0d rd=%0d", 
+                         $time, fetch_decode_valid, f2d_valid, d2o_valid, o2e_valid, e2m_valid, m2w_valid,
+                         stall_decode, stall_operand, stall_execute, stall_memory,
+                         f2d_valid ? f2d_instr[31:26] : 0,
+                         f2d_valid ? decoded_raw.rd : 0);
+            end
+            
+            // Debug stall reasons when stalled
+            if (stall_decode && f2d_valid && $time > 1700000) begin
+                $display("t=%0t STALL: hazard=%b bypass=%b fwd_stall=%b scoreboard=%b",
+                         $time, stall_hazard, fwd_can_bypass_hazard, fwd_stall_required, scoreboard_hazard_detected);
+            end
+            
+            if (decode_valid_raw && !illegal_instr_raw) begin
+                $display("t=%0t DECODE: valid instr=0x%08x opc=%0d rd=%0d rs1=%0d imm=0x%x mask=%b",
+                         $time, f2d_instr, decoded_raw.opcode, decoded_raw.rd, decoded_raw.rs1, decoded_raw.imm, f2d_mask);
+            end
+            
+            // Debug operand stage - check when ST instruction is in d2o
+            if (d2o_valid && (d2o_decoded.opcode == OP_ST || d2o_decoded.opcode == OP_ST32)) begin
+                $display("t=%0t OPND_STORE: is_store=%b rf_rs2_addr=%0d(rd=%0d) rf_rs2_data[0..3]=%0d,%0d,%0d,%0d",
+                         $time, is_store_instr, rf_rs2_addr, d2o_decoded.rd, rf_rs2_data[0], rf_rs2_data[1], rf_rs2_data[2], rf_rs2_data[3]);
+            end
+            
+            if (illegal_instr_raw && f2d_valid) begin
+                $display("t=%0t DECODE: ILLEGAL instr=0x%08x opc=%0d",
+                         $time, f2d_instr, f2d_instr[31:26]);
+            end
+            
+            if (o2e_valid) begin
+                $display("t=%0t EXEC: warp=%0d opc=%0d rd=%0d rd_en=%b mask=%b exec_vld=%b exec_rdy=%b",
+                         $time, o2e_warp_id, o2e_decoded.opcode, o2e_decoded.rd, o2e_decoded.rd_en, 
+                         o2e_mask, exec_valid_out, exec_ready);
+                // Debug MOVSR: show exec_unit and sr_data
+                if (o2e_decoded.exec_unit == EX_SPECIAL) begin
+                    $display("t=%0t MOVSR: exec_unit=SPECIAL sr_data[0..3]=%0d,%0d,%0d,%0d o2e_sr_data[0]=%0d",
+                             $time, o2e_sr_data[0], o2e_sr_data[1], o2e_sr_data[2], o2e_sr_data[3], o2e_sr_data[0]);
+                end
+                // Debug store data
+                if (o2e_decoded.opcode == OP_ST || o2e_decoded.opcode == OP_ST32) begin
+                    $display("t=%0t STORE_DATA: o2e_rs2_data[0..3]=%0d,%0d,%0d,%0d rs2_data[4..7]=%0d,%0d,%0d,%0d",
+                             $time, o2e_rs2_data[0], o2e_rs2_data[1], o2e_rs2_data[2], o2e_rs2_data[3],
+                             o2e_rs2_data[4], o2e_rs2_data[5], o2e_rs2_data[6], o2e_rs2_data[7]);
+                end
+            end
+            
+            if (m2w_valid) begin
+                $display("t=%0t WB: warp=%0d rd=r%0d en=%b mask=%b data[0..7]=%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d",
+                         $time, m2w_warp_id, m2w_rd, m2w_rd_en, m2w_mask, 
+                         m2w_data[0], m2w_data[1], m2w_data[2], m2w_data[3],
+                         m2w_data[4], m2w_data[5], m2w_data[6], m2w_data[7]);
+            end
+            
+            if (o2e_valid && o2e_decoded.is_exit) begin
+                $display("t=%0t WARP_EXIT: warp=%0d mask=%b", $time, o2e_warp_id, o2e_mask);
+            end
+        end
+    end
+    `endif
+
+    // Debug: gmem adapter
+    `ifdef DEBUG_GMEM
+    always @(posedge clk) begin
+        if (rst_n && (lsu_gmem_req_valid || gmem_state != GMEM_IDLE)) begin
+            $display("t=%0t GMEM: state=%0d lsu_valid=%b lsu_ready=%b we=%b addr=0x%h wdata=0x%h awready=%b wready=%b bvalid=%b",
+                     $time, gmem_state, lsu_gmem_req_valid, lsu_gmem_req_ready, lsu_gmem_req_we, lsu_gmem_req_addr,
+                     lsu_gmem_req_wdata, gmem_awready, gmem_wready, gmem_bvalid);
+        end
+    end
+    `endif
 
 endmodule
