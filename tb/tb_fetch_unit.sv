@@ -19,9 +19,9 @@ module tb_fetch_unit;
     // Parameters
     //=========================================================================
     
-    parameter int NUM_WARPS       = WARPS_PER_CORE;
-    parameter int ICACHE_SIZE     = 4096;
-    parameter int FETCH_BUF_DEPTH = 2;
+    parameter int P_NUM_WARPS       = WARPS_PER_CORE;
+    parameter int P_ICACHE_SIZE     = 4096;
+    parameter int P_FETCH_BUF_DEPTH = 2;
     parameter int CLK_PERIOD      = 10;
     
     //=========================================================================
@@ -54,7 +54,7 @@ module tb_fetch_unit;
     logic [255:0]                   imem_resp_data;
     
     // Control
-    logic [NUM_WARPS-1:0]           warp_flush;
+    logic [P_NUM_WARPS-1:0]           warp_flush;
     logic                           cache_flush;
     
     // PC update interface
@@ -64,7 +64,7 @@ module tb_fetch_unit;
     
     // Status
     logic                           busy;
-    logic [NUM_WARPS-1:0]           warp_fetch_ready;
+    logic [P_NUM_WARPS-1:0]           warp_fetch_ready;
     
     //=========================================================================
     // Test Variables
@@ -89,9 +89,9 @@ module tb_fetch_unit;
     //=========================================================================
     
     fetch_unit #(
-        .NUM_WARPS(NUM_WARPS),
-        .ICACHE_SIZE(ICACHE_SIZE),
-        .FETCH_BUF_DEPTH(FETCH_BUF_DEPTH)
+        .NUM_WARPS(P_NUM_WARPS),
+        .P_ICACHE_SIZE(P_ICACHE_SIZE),
+        .FETCH_BUF_DEPTH(P_FETCH_BUF_DEPTH)
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -116,6 +116,9 @@ module tb_fetch_unit;
         .pc_update_valid(pc_update_valid),
         .pc_update_warp_id(pc_update_warp_id),
         .pc_update_value(pc_update_value),
+        .pc_advance_valid(),
+        .pc_advance_warp_id(),
+        .pc_advance_value(),
         .busy(busy),
         .warp_fetch_ready(warp_fetch_ready)
     );

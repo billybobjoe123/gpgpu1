@@ -9,6 +9,10 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 module warp_scheduler

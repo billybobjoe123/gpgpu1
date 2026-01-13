@@ -22,6 +22,10 @@
 // Date:        January 1, 2026
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 module fpu
@@ -754,21 +758,16 @@ module fp_adder_sp (
     // Normalize result
     logic [7:0]  result_exp;
     logic [22:0] result_mant;
-    logic [5:0]  leading_zeros;
-    
-    // Count leading zeros in mantissa sum
-    always_comb begin
-        leading_zeros = 0;
-        for (int i = 48; i >= 0; i--) begin
-            if (mant_sum[i] == 1'b0) begin
-                leading_zeros = 48 - i[5:0];
-            end else begin
-                break;
-            end
-        end
-    end
+    logic [48:0] normalized_mant;
+    logic [7:0]  shift_amount;
     
     always_comb begin
+        result_exp      = '0;
+        result_mant     = '0;
+        normalized_mant = '0;
+        shift_amount    = '0;
+        result          = '0;
+
         if (a_is_nan || b_is_nan) begin
             // NaN propagation
             result = 32'h7FC00000;  // Quiet NaN
@@ -794,14 +793,12 @@ module fp_adder_sp (
             result      = {result_sign, result_exp, result_mant};
         end else begin
             // Normalize by shifting left
-            logic [48:0] normalized_mant;
-            logic [7:0]  shift_amount;
             
             // Find position of leading 1
-            shift_amount = 0;
+            shift_amount = '0;
             for (int i = 47; i >= 0; i--) begin
                 if (mant_sum[i]) begin
-                    shift_amount = 47 - i[7:0];
+                    shift_amount = (47 - i[7:0]);
                     break;
                 end
             end
@@ -868,6 +865,8 @@ module fp_mul_sp (
     logic [22:0] result_mant;
     
     always_comb begin
+        result_exp  = '0;
+        result_mant = '0;
         if (a_is_nan || b_is_nan) begin
             result = 32'h7FC00000;  // Quiet NaN
         end else if ((a_is_inf && b_is_zero) || (b_is_inf && a_is_zero)) begin
@@ -878,7 +877,7 @@ module fp_mul_sp (
             result = {result_sign, 31'h0};  // Zero
         end else if (mant_product[47]) begin
             // Product >= 2.0, shift right
-            result_exp  = exp_sum[7:0] + 1;
+            result_exp  = exp_sum[7:0] + 8'd1;
             result_mant = mant_product[46:24];
             if (exp_sum >= 10'd255) begin
                 result = {result_sign, 8'hFF, 23'h0};  // Overflow to inf
@@ -946,8 +945,12 @@ module fp_div_sp (
     // Normalize and pack result
     logic [7:0]  result_exp;
     logic [22:0] result_mant;
+    logic [5:0]  shift;
     
     always_comb begin
+        result_exp  = '0;
+        result_mant = '0;
+        shift       = '0;
         if (a_is_nan || b_is_nan) begin
             result = 32'h7FC00000;  // Quiet NaN
         end else if (a_is_inf && b_is_inf) begin
@@ -960,7 +963,7 @@ module fp_div_sp (
             result = {result_sign, 31'h0};  // Zero
         end else if (quotient[47]) begin
             // Quotient >= 2.0
-            result_exp  = exp_diff[7:0] + 1;
+            result_exp  = exp_diff[7:0] + 8'd1;
             result_mant = quotient[46:24];
             if (exp_diff >= 10'sd255) begin
                 result = {result_sign, 8'hFF, 23'h0};
@@ -971,7 +974,6 @@ module fp_div_sp (
             end
         end else begin
             // Quotient < 2.0 - normalize
-            logic [5:0] shift;
             shift = 0;
             for (int i = 46; i >= 0; i--) begin
                 if (quotient[i]) begin
@@ -980,9 +982,9 @@ module fp_div_sp (
                 end
             end
             
-            if (exp_diff - {4'h0, shift} < 10'sd1) begin
+            if (exp_diff - $signed({4'h0, shift}) < 10'sd1) begin
                 result = {result_sign, 31'h0};  // Underflow
-            end else if (exp_diff - {4'h0, shift} >= 10'sd255) begin
+            end else if (exp_diff - $signed({4'h0, shift}) >= 10'sd255) begin
                 result = {result_sign, 8'hFF, 23'h0};  // Overflow
             end else begin
                 result_exp  = exp_diff[7:0] - {2'b0, shift};
@@ -1093,8 +1095,8 @@ module fp_fma_sp (
         // Normalize product mantissa position
         // prod_mant[47] is the leading bit if >= 2.0, else prod_mant[46]
         if (prod_mant[47]) begin
-            exp_diff = $signed({1'b0, prod_exp + 1}) - $signed({1'b0, c_exp_eff});
-            result_exp_pre = prod_exp + 1;
+            exp_diff = $signed({1'b0, prod_exp + 10'd1}) - $signed({1'b0, c_exp_eff});
+            result_exp_pre = prod_exp + 10'd1;
         end else begin
             exp_diff = $signed({1'b0, prod_exp}) - $signed({1'b0, c_exp_eff});
             result_exp_pre = prod_exp;
@@ -1104,9 +1106,9 @@ module fp_fma_sp (
         
         // Calculate shift amount (capped)
         if (exp_diff >= 0) begin
-            shift_amount = (exp_diff > 72) ? 7'd72 : exp_diff[6:0];
+            shift_amount = (exp_diff > 11'sd72) ? 7'd72 : exp_diff[6:0];
         end else begin
-            shift_amount = (-exp_diff > 72) ? 7'd72 : (-exp_diff[6:0]);
+            shift_amount = (-exp_diff > 11'sd72) ? 7'd72 : (-exp_diff[6:0]);
         end
         
         // Align operands
@@ -1165,12 +1167,18 @@ module fp_fma_sp (
     logic [7:0]  result_exp;
     logic [22:0] result_mant;
     logic        result_sign;
+    logic [6:0] leading_zeros_count;
+    logic [72:0] normalized_mant_fma;
+    logic signed [10:0] final_exp;
     
     always_comb begin
         result = 32'h0;
         result_sign = sum_sign;
         result_exp = 8'h0;
         result_mant = 23'h0;
+        leading_zeros_count = '0;
+        normalized_mant_fma = '0;
+        final_exp = '0;
         
         // Handle special cases first
         if (a_is_nan || b_is_nan || c_is_nan) begin
@@ -1190,15 +1198,12 @@ module fp_fma_sp (
             result = 32'h00000000;  // Zero
         end else begin
             // Normalize the result
-            logic [6:0] leading_zeros;
-            logic [72:0] normalized_mant;
-            logic signed [10:0] final_exp;
             
             // Find leading one position
-            leading_zeros = 0;
+            leading_zeros_count = 0;
             for (int i = 72; i >= 0; i--) begin
                 if (sum_mant[i]) begin
-                    leading_zeros = 72 - i[6:0];
+                    leading_zeros_count = 72 - i[6:0];
                     break;
                 end
             end
@@ -1207,11 +1212,11 @@ module fp_fma_sp (
             if (sum_mant[72]) begin
                 // Overflow from addition
                 final_exp = result_exp_pre + 1;
-                normalized_mant = sum_mant;
+                normalized_mant_fma = sum_mant;
             end else begin
                 // Shift to normalize
-                final_exp = $signed({1'b0, result_exp_pre}) - $signed({4'b0, leading_zeros}) + 1;
-                normalized_mant = sum_mant << leading_zeros;
+                final_exp = $signed({1'b0, result_exp_pre}) - $signed({4'b0, leading_zeros_count}) + 1;
+                normalized_mant_fma = sum_mant << leading_zeros_count;
             end
             
             // Extract mantissa (bits 71:49 for 23-bit mantissa)
@@ -1223,7 +1228,7 @@ module fp_fma_sp (
                 result = {result_sign, 31'h0};
             end else begin
                 result_exp = final_exp[7:0];
-                result_mant = normalized_mant[71:49];
+                result_mant = normalized_mant_fma[71:49];
                 result = {result_sign, result_exp, result_mant};
             end
         end
@@ -1256,11 +1261,14 @@ module fp_sqrt_sp (
     
     // Fast inverse square root approximation (famous Quake algorithm adapted)
     // Then invert to get sqrt
-    logic [31:0] sqrt_approx;
     logic [7:0]  result_exp;
     logic [22:0] result_mant;
+    logic [8:0]  exp_minus_bias;
     
     always_comb begin
+        result_exp = '0;
+        result_mant = '0;
+        exp_minus_bias = '0;
         if (a_is_nan || a_sign) begin
             result = 32'h7FC00000;  // NaN for negative or NaN input
         end else if (a_is_zero) begin
@@ -1272,7 +1280,6 @@ module fp_sqrt_sp (
             // For IEEE 754: result_exp ≈ (a_exp - 127) / 2 + 127
             // Simplified Newton-Raphson could be added
             
-            logic [8:0] exp_minus_bias;
             exp_minus_bias = {1'b0, a_exp} - 9'd127;
             
             // Handle odd exponent
@@ -1318,6 +1325,8 @@ module fp_rcp_sp (
     logic [22:0] result_mant;
     
     always_comb begin
+        result_exp = '0;
+        result_mant = '0;
         if (a_is_nan) begin
             result = 32'h7FC00000;  // NaN
         end else if (a_is_zero) begin
@@ -1362,6 +1371,7 @@ module fp_rsqrt_sp (
     logic [31:0] magic_result;
     
     always_comb begin
+        magic_result = '0;
         if (a_is_nan || a_sign) begin
             result = 32'h7FC00000;  // NaN for negative or NaN input
         end else if (a_is_zero) begin
@@ -1419,15 +1429,15 @@ module fp_convert
     
     // Find leading one function
     function automatic logic [5:0] find_leading_one(input logic [63:0] val);
-        logic [5:0] result;
-        result = 0;
+        logic [5:0] leading_idx;
+        leading_idx = 0;
         for (int i = 63; i >= 0; i--) begin
             if (val[i]) begin
-                result = i[5:0];
+                leading_idx = i[5:0];
                 break;
             end
         end
-        return result;
+        return leading_idx;
     endfunction
     
     always_comb begin

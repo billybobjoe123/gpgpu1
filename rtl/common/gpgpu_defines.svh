@@ -11,6 +11,9 @@
 `ifndef GPGPU_DEFINES_SVH
 `define GPGPU_DEFINES_SVH
 
+timeunit 1ns;
+timeprecision 1ps;
+
 //=============================================================================
 // Simulation vs Synthesis
 //=============================================================================

@@ -10,9 +10,9 @@ module tb_performance_counters;
     //=========================================================================
     // Parameters
     //=========================================================================
-    localparam int NUM_CORES     = 4;
-    localparam int NUM_COUNTERS  = 32;
-    localparam int COUNTER_WIDTH = 48;
+    localparam int TB_NUM_CORES     = 4;
+    localparam int TB_NUM_COUNTERS  = 32;
+    localparam int TB_COUNTER_WIDTH = 48;
     
     //=========================================================================
     // Clock and Reset
@@ -37,25 +37,25 @@ module tb_performance_counters;
     
     // Global events
     logic                    gpu_busy;
-    logic [NUM_CORES-1:0]    cores_active;
+    logic [TB_NUM_CORES-1:0]    cores_active;
     
     // Per-core events
-    logic [NUM_CORES-1:0]    core_instr_valid;
-    logic [NUM_CORES-1:0]    core_instr_is_alu;
-    logic [NUM_CORES-1:0]    core_instr_is_fpu;
-    logic [NUM_CORES-1:0]    core_instr_is_mem;
-    logic [NUM_CORES-1:0]    core_instr_is_branch;
-    logic [NUM_CORES-1:0]    core_instr_is_shuffle;
-    logic [NUM_CORES-1:0]    core_instr_is_atomic;
-    logic [NUM_CORES-1:0]    core_branch_taken;
-    logic [NUM_CORES-1:0]    core_branch_divergent;
-    logic [NUM_CORES-1:0]    core_stall_fetch;
-    logic [NUM_CORES-1:0]    core_stall_decode;
-    logic [NUM_CORES-1:0]    core_stall_operand;
-    logic [NUM_CORES-1:0]    core_stall_execute;
-    logic [NUM_CORES-1:0]    core_stall_memory;
-    logic [NUM_CORES-1:0]    core_stall_scoreboard;
-    logic [NUM_CORES-1:0]    core_warp_at_barrier;
+    logic [TB_NUM_CORES-1:0]    core_instr_valid;
+    logic [TB_NUM_CORES-1:0]    core_instr_is_alu;
+    logic [TB_NUM_CORES-1:0]    core_instr_is_fpu;
+    logic [TB_NUM_CORES-1:0]    core_instr_is_mem;
+    logic [TB_NUM_CORES-1:0]    core_instr_is_branch;
+    logic [TB_NUM_CORES-1:0]    core_instr_is_shuffle;
+    logic [TB_NUM_CORES-1:0]    core_instr_is_atomic;
+    logic [TB_NUM_CORES-1:0]    core_branch_taken;
+    logic [TB_NUM_CORES-1:0]    core_branch_divergent;
+    logic [TB_NUM_CORES-1:0]    core_stall_fetch;
+    logic [TB_NUM_CORES-1:0]    core_stall_decode;
+    logic [TB_NUM_CORES-1:0]    core_stall_operand;
+    logic [TB_NUM_CORES-1:0]    core_stall_execute;
+    logic [TB_NUM_CORES-1:0]    core_stall_memory;
+    logic [TB_NUM_CORES-1:0]    core_stall_scoreboard;
+    logic [TB_NUM_CORES-1:0]    core_warp_at_barrier;
     
     // Memory events
     logic                    l2_hit;
@@ -86,9 +86,9 @@ module tb_performance_counters;
     //=========================================================================
     
     performance_counters #(
-        .NUM_COUNTERS    (NUM_COUNTERS),
-        .COUNTER_WIDTH   (COUNTER_WIDTH),
-        .NUM_CORES       (NUM_CORES)
+        .NUM_COUNTERS    (TB_NUM_COUNTERS),
+        .COUNTER_WIDTH   (TB_COUNTER_WIDTH),
+        .NUM_CORES       (TB_NUM_CORES)
     ) dut (
         .clk                  (clk),
         .rst_n                (rst_n),

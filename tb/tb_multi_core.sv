@@ -15,9 +15,9 @@ module tb_multi_core;
     //=========================================================================
     // Parameters
     //=========================================================================
-    localparam CLK_PERIOD = 10;
-    localparam NUM_CORES = 4;
-    localparam TIMEOUT_CYCLES = 50000;
+    localparam int CLK_PERIOD = 10;
+    localparam int P_NUM_CORES = 4;
+    localparam int TIMEOUT_CYCLES = 50000;
     
     //=========================================================================
     // Clock and Reset
@@ -49,7 +49,7 @@ module tb_multi_core;
     // Status
     logic                    gpu_busy;
     logic                    gpu_done;
-    logic [NUM_CORES-1:0]    cores_active;
+    logic [P_NUM_CORES-1:0]    cores_active;
     logic [31:0]             perf_cycle_count;
     logic [31:0]             perf_instr_count;
     
@@ -89,7 +89,6 @@ module tb_multi_core;
     int test_count = 0;
     int pass_count = 0;
     int fail_count = 0;
-    int cycle_count = 0;
     
     //=========================================================================
     // Simple Memory Model
@@ -211,10 +210,10 @@ module tb_multi_core;
     // DUT Instantiation
     //=========================================================================
     gpu_top #(
-        .NUM_CORES       (NUM_CORES),
-        .WARPS_PER_CORE  (4),
-        .ICACHE_SIZE     (4096),
-        .SHARED_MEM_SIZE (16384)
+        .P_NUM_CORES        (P_NUM_CORES),
+        .P_WARPS_PER_CORE   (4),
+        .P_ICACHE_SIZE      (4096),
+        .P_SHARED_MEM_SIZE  (16384)
     ) dut (
         .clk             (clk),
         .rst_n           (rst_n),
@@ -365,7 +364,7 @@ module tb_multi_core;
         $display("===========================================");
         $display("Multi-Core Integration Testbench");
         $display("===========================================");
-        $display("Cores: %0d", NUM_CORES);
+        $display("Cores: %0d", P_NUM_CORES);
         
         //---------------------------------------------------------------------
         // Test 1: Basic multi-core activation
@@ -481,10 +480,4 @@ module tb_multi_core;
         $finish;
     end
     
-    // Cycle counter for debugging
-    always_ff @(posedge clk) begin
-        if (rst_n) cycle_count <= cycle_count + 1;
-        else cycle_count <= 0;
-    end
-
 endmodule

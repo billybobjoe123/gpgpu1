@@ -20,14 +20,14 @@ module tb_gpu_system;
     // Parameters
     //=========================================================================
     
-    parameter int NUM_CORES       = 2;      // Fewer cores for faster testing
-    parameter int WARPS_PER_CORE  = 4;
-    parameter int ICACHE_SIZE     = 4096;
-    parameter int SHARED_MEM_SIZE = 16384;
-    parameter int L2_SIZE_KB      = 64;     // Smaller for faster testing
-    parameter int MEM_CHANNELS    = 2;
-    parameter int MEM_BANKS       = 4;
-    parameter int MEM_ROWS        = 1024;   // Smaller for testing
+    parameter int P_NUM_CORES       = 2;      // Fewer cores for faster testing
+    parameter int P_WARPS_PER_CORE  = 4;
+    parameter int P_ICACHE_SIZE     = 4096;
+    parameter int P_SHARED_MEM_SIZE = 16384;
+    parameter int P_L2_SIZE_KB      = 64;     // Smaller for faster testing
+    parameter int P_MEM_CHANNELS    = 2;
+    parameter int P_MEM_BANKS       = 4;
+    parameter int P_MEM_ROWS        = 1024;   // Smaller for testing
     parameter int CLK_PERIOD      = 10;
     
     //=========================================================================
@@ -50,20 +50,20 @@ module tb_gpu_system;
     logic [15:0]             cmd_block_dim_z;
     
     // DDR interface
-    logic [MEM_CHANNELS-1:0]                             ddr_cs_n;
-    logic [MEM_CHANNELS-1:0]                             ddr_ras_n;
-    logic [MEM_CHANNELS-1:0]                             ddr_cas_n;
-    logic [MEM_CHANNELS-1:0]                             ddr_we_n;
-    logic [MEM_CHANNELS-1:0][$clog2(MEM_BANKS)-1:0]      ddr_ba;
-    logic [MEM_CHANNELS-1:0][$clog2(MEM_ROWS)-1:0]       ddr_addr;
-    logic [MEM_CHANNELS-1:0][511:0]                      ddr_wdata;
-    logic [MEM_CHANNELS-1:0][511:0]                      ddr_rdata;
-    logic [MEM_CHANNELS-1:0]                             ddr_rdata_valid;
+    logic [P_MEM_CHANNELS-1:0]                             ddr_cs_n;
+    logic [P_MEM_CHANNELS-1:0]                             ddr_ras_n;
+    logic [P_MEM_CHANNELS-1:0]                             ddr_cas_n;
+    logic [P_MEM_CHANNELS-1:0]                             ddr_we_n;
+    logic [P_MEM_CHANNELS-1:0][$clog2(P_MEM_BANKS)-1:0]      ddr_ba;
+    logic [P_MEM_CHANNELS-1:0][$clog2(P_MEM_ROWS)-1:0]       ddr_addr;
+    logic [P_MEM_CHANNELS-1:0][511:0]                      ddr_wdata;
+    logic [P_MEM_CHANNELS-1:0][511:0]                      ddr_rdata;
+    logic [P_MEM_CHANNELS-1:0]                             ddr_rdata_valid;
     
     // Status
     logic                    gpu_busy;
     logic                    gpu_done;
-    logic [NUM_CORES-1:0]    cores_active;
+    logic [P_NUM_CORES-1:0]    cores_active;
     
     // Performance counters
     logic [31:0]             perf_cycle_count;
@@ -98,18 +98,18 @@ module tb_gpu_system;
     //=========================================================================
     
     gpu_system #(
-        .NUM_CORES(NUM_CORES),
-        .WARPS_PER_CORE(WARPS_PER_CORE),
-        .ICACHE_SIZE(ICACHE_SIZE),
-        .SHARED_MEM_SIZE(SHARED_MEM_SIZE),
-        .L2_SIZE_KB(L2_SIZE_KB),
-        .L2_LINE_SIZE(64),
-        .L2_NUM_WAYS(4),
-        .L2_NUM_MSHR(4),
-        .MEM_CHANNELS(MEM_CHANNELS),
-        .MEM_BANKS(MEM_BANKS),
-        .MEM_ROWS(MEM_ROWS),
-        .MEM_DATA_WIDTH(512)
+        .P_NUM_CORES       (P_NUM_CORES),
+        .P_WARPS_PER_CORE  (P_WARPS_PER_CORE),
+        .P_ICACHE_SIZE     (P_ICACHE_SIZE),
+        .P_SHARED_MEM_SIZE (P_SHARED_MEM_SIZE),
+        .P_L2_SIZE_KB      (P_L2_SIZE_KB),
+        .P_L2_LINE_SIZE    (64),
+        .P_L2_NUM_WAYS     (4),
+        .P_L2_NUM_MSHR     (4),
+        .P_MEM_CHANNELS    (P_MEM_CHANNELS),
+        .P_MEM_BANKS       (P_MEM_BANKS),
+        .P_MEM_ROWS        (P_MEM_ROWS),
+        .P_MEM_DATA_WIDTH  (512)
     ) dut (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -167,7 +167,7 @@ module tb_gpu_system;
     localparam int DDR_LATENCY = 15;  // CAS latency simulation
     
     // Memory storage per channel
-    logic [511:0] ddr_memory [MEM_CHANNELS][0:65535];  // 64K entries per channel
+    logic [511:0] ddr_memory [P_MEM_CHANNELS][0:65535];  // 64K entries per channel
     
     // Per-channel state machines
     typedef enum logic [2:0] {
@@ -180,16 +180,16 @@ module tb_gpu_system;
         DDR_PRECHARGE
     } ddr_state_t;
     
-    ddr_state_t ddr_state [MEM_CHANNELS];
-    logic [$clog2(MEM_ROWS)-1:0] ddr_open_row [MEM_CHANNELS][MEM_BANKS];
-    logic [MEM_BANKS-1:0] ddr_row_open [MEM_CHANNELS];
-    logic [7:0] ddr_timer [MEM_CHANNELS];
-    logic [$clog2(MEM_BANKS)-1:0] ddr_current_bank [MEM_CHANNELS];
-    logic [15:0] ddr_current_addr [MEM_CHANNELS];
+    ddr_state_t ddr_state [P_MEM_CHANNELS];
+    logic [$clog2(P_MEM_ROWS)-1:0] ddr_open_row [P_MEM_CHANNELS][P_MEM_BANKS];
+    logic [P_MEM_BANKS-1:0] ddr_row_open [P_MEM_CHANNELS];
+    logic [7:0] ddr_timer [P_MEM_CHANNELS];
+    logic [$clog2(P_MEM_BANKS)-1:0] ddr_current_bank [P_MEM_CHANNELS];
+    logic [15:0] ddr_current_addr [P_MEM_CHANNELS];
     
     // Initialize memory with test pattern
     initial begin
-        for (int ch = 0; ch < MEM_CHANNELS; ch++) begin
+        for (int ch = 0; ch < P_MEM_CHANNELS; ch++) begin
             for (int i = 0; i < 65536; i++) begin
                 ddr_memory[ch][i] = {16{32'hDEADBEEF}};  // Default pattern
             end
@@ -208,7 +208,7 @@ module tb_gpu_system;
     
     // DDR model for each channel
     generate
-        for (genvar ch = 0; ch < MEM_CHANNELS; ch++) begin : gen_ddr_model
+        for (genvar ch = 0; ch < P_MEM_CHANNELS; ch++) begin : gen_ddr_model
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
                     ddr_state[ch] <= DDR_IDLE;
@@ -244,7 +244,7 @@ module tb_gpu_system;
                             
                             // Can accept read/write after activate
                             if (!ddr_cs_n[ch] && ddr_ras_n[ch] && !ddr_cas_n[ch]) begin
-                                ddr_current_addr[ch] <= {ddr_open_row[ch][ddr_ba[ch]][$clog2(MEM_ROWS)-1:6], ddr_addr[ch][9:0]};
+                                ddr_current_addr[ch] <= {ddr_open_row[ch][ddr_ba[ch]][$clog2(P_MEM_ROWS)-1:6], ddr_addr[ch][9:0]};
                                 if (ddr_we_n[ch]) begin
                                     // READ command
                                     ddr_timer[ch] <= DDR_LATENCY;
@@ -301,18 +301,18 @@ module tb_gpu_system;
     //=========================================================================
     
     task automatic reset_system();
-        rst_n <= 1'b0;
-        cmd_valid <= 1'b0;
-        cmd_opcode <= CMD_NOP;
-        cmd_pc <= '0;
-        cmd_grid_dim_x <= 1;
-        cmd_grid_dim_y <= 1;
-        cmd_grid_dim_z <= 1;
-        cmd_block_dim_x <= 8;
-        cmd_block_dim_y <= 1;
-        cmd_block_dim_z <= 1;
+        rst_n = 1'b0;
+        cmd_valid = 1'b0;
+        cmd_opcode = CMD_NOP;
+        cmd_pc = '0;
+        cmd_grid_dim_x = 1;
+        cmd_grid_dim_y = 1;
+        cmd_grid_dim_z = 1;
+        cmd_block_dim_x = 8;
+        cmd_block_dim_y = 1;
+        cmd_block_dim_z = 1;
         repeat(10) @(posedge clk);
-        rst_n <= 1'b1;
+        rst_n = 1'b1;
         repeat(5) @(posedge clk);
     endtask
     
@@ -323,17 +323,17 @@ module tb_gpu_system;
     );
         @(posedge clk);
         wait(cmd_ready);
-        cmd_valid <= 1'b1;
-        cmd_opcode <= CMD_LAUNCH;
-        cmd_pc <= pc;
-        cmd_grid_dim_x <= grid_x;
-        cmd_grid_dim_y <= grid_y;
-        cmd_grid_dim_z <= grid_z;
-        cmd_block_dim_x <= block_x;
-        cmd_block_dim_y <= block_y;
-        cmd_block_dim_z <= block_z;
+        cmd_valid = 1'b1;
+        cmd_opcode = CMD_LAUNCH;
+        cmd_pc = pc;
+        cmd_grid_dim_x = grid_x;
+        cmd_grid_dim_y = grid_y;
+        cmd_grid_dim_z = grid_z;
+        cmd_block_dim_x = block_x;
+        cmd_block_dim_y = block_y;
+        cmd_block_dim_z = block_z;
         @(posedge clk);
-        cmd_valid <= 1'b0;
+        cmd_valid = 1'b0;
     endtask
     
     task automatic wait_kernel_done(input int timeout_cycles);
@@ -365,11 +365,11 @@ module tb_gpu_system;
         $display("GPGPU-1 GPU System Testbench");
         $display("===========================================");
         $display("Configuration:");
-        $display("  NUM_CORES:       %0d", NUM_CORES);
-        $display("  WARPS_PER_CORE:  %0d", WARPS_PER_CORE);
-        $display("  L2 Cache Size:   %0d KB", L2_SIZE_KB);
-        $display("  Memory Channels: %0d", MEM_CHANNELS);
-        $display("  Memory Banks:    %0d", MEM_BANKS);
+        $display("  NUM_CORES:       %0d", P_NUM_CORES);
+        $display("  WARPS_PER_CORE:  %0d", P_WARPS_PER_CORE);
+        $display("  L2 Cache Size:   %0d KB", P_L2_SIZE_KB);
+        $display("  Memory Channels: %0d", P_MEM_CHANNELS);
+        $display("  Memory Banks:    %0d", P_MEM_BANKS);
         $display("===========================================");
         
         test_count = 0;
@@ -440,7 +440,7 @@ module tb_gpu_system;
         // Check that the memory hierarchy is connected properly
         // (values may be 0 if kernels don't access memory)
         check_result("Memory subsystem connected", 
-            (perf_l2_hits + perf_l2_misses >= 0));  // Always true, but verifies signals exist
+            (perf_l2_hits + perf_l2_misses >= 32'd0));  // Always true, but verifies signals exist
         
         //=====================================================================
         // Test Summary

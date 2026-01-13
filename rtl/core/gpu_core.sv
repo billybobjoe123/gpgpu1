@@ -14,15 +14,17 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 module gpu_core
     import gpgpu_pkg::*;
 #(
-    parameter int CORE_ID         = 0,
-    parameter int NUM_WARPS       = WARPS_PER_CORE,
-    parameter int ICACHE_SIZE     = 4096,
-    parameter int SHARED_MEM_SIZE = 16384
+    parameter int CORE_ID           = 0,
+    parameter int NUM_WARPS         = WARPS_PER_CORE,
+    parameter int P_ICACHE_SIZE     = 4096,
+    parameter int P_SHARED_MEM_SIZE = 16384
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -507,9 +509,10 @@ module gpu_core
     // Fetch Unit Instance
     //=========================================================================
     
+    /* verilator lint_off PINCONNECTEMPTY */
     fetch_unit #(
         .NUM_WARPS(NUM_WARPS),
-        .ICACHE_SIZE(ICACHE_SIZE)
+        .P_ICACHE_SIZE(P_ICACHE_SIZE)
     ) u_fetch_unit (
         .clk                 (clk),
         .rst_n               (rst_n),
@@ -550,8 +553,11 @@ module gpu_core
         
         // Status
         .busy                (fetch_busy),
+        /* verilator lint_off PINCONNECTEMPTY */
         .warp_fetch_ready    ()  // Unused
+        /* verilator lint_on PINCONNECTEMPTY */
     );
+    /* verilator lint_on PINCONNECTEMPTY */
     
     //=========================================================================
     // Fetch -> Decode Pipeline Register
@@ -1079,7 +1085,7 @@ module gpu_core
     
     shared_memory #(
         .NUM_BANKS (WARP_SIZE),
-        .BANK_SIZE (SHARED_MEM_SIZE / WARP_SIZE / 8)  // Convert to words per bank
+        .BANK_SIZE (P_SHARED_MEM_SIZE / WARP_SIZE / 8)  // Convert to words per bank
     ) u_shared_memory (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -1111,67 +1117,77 @@ module gpu_core
         GMEM_WRITE_RESP
     } gmem_state_t;
     
-    gmem_state_t gmem_state;
+    gmem_state_t gmem_state, next_gmem_state;
     logic [ADDR_WIDTH-1:0] gmem_addr_r;
     logic [DATA_WIDTH-1:0] gmem_wdata_r;
     logic [7:0] gmem_wstrb_r;
     logic gmem_we_r;
-    
+
+    // FSM State Update
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             gmem_state <= GMEM_IDLE;
+        end else begin
+            gmem_state <= next_gmem_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_gmem_state = gmem_state;
+        case (gmem_state)
+            GMEM_IDLE: begin
+                if (lsu_gmem_req_valid && lsu_gmem_req_ready) begin
+                    if (lsu_gmem_req_we) begin
+                        next_gmem_state = GMEM_WRITE_ADDR;
+                    end else begin
+                        next_gmem_state = GMEM_READ_ADDR;
+                    end
+                end
+            end
+            GMEM_READ_ADDR: begin
+                if (gmem_arready) begin
+                    next_gmem_state = GMEM_READ_DATA;
+                end
+            end
+            GMEM_READ_DATA: begin
+                if (gmem_rvalid && gmem_rlast) begin
+                    next_gmem_state = GMEM_IDLE;
+                end
+            end
+            GMEM_WRITE_ADDR: begin
+                if (gmem_awready) begin
+                    next_gmem_state = GMEM_WRITE_DATA;
+                end
+            end
+            GMEM_WRITE_DATA: begin
+                if (gmem_wready) begin
+                    next_gmem_state = GMEM_WRITE_RESP;
+                end
+            end
+            GMEM_WRITE_RESP: begin
+                if (gmem_bvalid) begin
+                    next_gmem_state = GMEM_IDLE;
+                end
+            end
+            default: next_gmem_state = GMEM_IDLE;
+        endcase
+    end
+
+    // Registered FSM Outputs
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             gmem_addr_r <= '0;
             gmem_wdata_r <= '0;
             gmem_wstrb_r <= '0;
             gmem_we_r <= 1'b0;
         end else begin
-            case (gmem_state)
-                GMEM_IDLE: begin
-                    if (lsu_gmem_req_valid && lsu_gmem_req_ready) begin
-                        gmem_addr_r <= lsu_gmem_req_addr;
-                        gmem_wdata_r <= lsu_gmem_req_wdata;
-                        gmem_wstrb_r <= lsu_gmem_req_wstrb;
-                        gmem_we_r <= lsu_gmem_req_we;
-                        if (lsu_gmem_req_we) begin
-                            gmem_state <= GMEM_WRITE_ADDR;
-                        end else begin
-                            gmem_state <= GMEM_READ_ADDR;
-                        end
-                    end
-                end
-                
-                GMEM_READ_ADDR: begin
-                    if (gmem_arready) begin
-                        gmem_state <= GMEM_READ_DATA;
-                    end
-                end
-                
-                GMEM_READ_DATA: begin
-                    if (gmem_rvalid && gmem_rlast) begin
-                        gmem_state <= GMEM_IDLE;
-                    end
-                end
-                
-                GMEM_WRITE_ADDR: begin
-                    if (gmem_awready) begin
-                        gmem_state <= GMEM_WRITE_DATA;
-                    end
-                end
-                
-                GMEM_WRITE_DATA: begin
-                    if (gmem_wready) begin
-                        gmem_state <= GMEM_WRITE_RESP;
-                    end
-                end
-                
-                GMEM_WRITE_RESP: begin
-                    if (gmem_bvalid) begin
-                        gmem_state <= GMEM_IDLE;
-                    end
-                end
-                
-                default: gmem_state <= GMEM_IDLE;
-            endcase
+            if (gmem_state == GMEM_IDLE && lsu_gmem_req_valid && lsu_gmem_req_ready) begin
+                gmem_addr_r <= lsu_gmem_req_addr;
+                gmem_wdata_r <= lsu_gmem_req_wdata;
+                gmem_wstrb_r <= lsu_gmem_req_wstrb;
+                gmem_we_r <= lsu_gmem_req_we;
+            end
         end
     end
     

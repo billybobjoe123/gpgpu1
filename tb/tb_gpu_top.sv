@@ -19,10 +19,10 @@ module tb_gpu_top;
     // Parameters
     //=========================================================================
     
-    parameter int NUM_CORES       = 4;
-    parameter int WARPS_PER_CORE  = 4;
-    parameter int ICACHE_SIZE     = 4096;
-    parameter int SHARED_MEM_SIZE = 16384;
+    parameter int P_NUM_CORES       = 4;
+    parameter int P_WARPS_PER_CORE  = 4;
+    parameter int P_ICACHE_SIZE     = 4096;
+    parameter int P_SHARED_MEM_SIZE = 16384;
     parameter int CLK_PERIOD      = 10;
     
     //=========================================================================
@@ -111,10 +111,10 @@ module tb_gpu_top;
     //=========================================================================
     
     gpu_top #(
-        .NUM_CORES(NUM_CORES),
-        .WARPS_PER_CORE(WARPS_PER_CORE),
-        .ICACHE_SIZE(ICACHE_SIZE),
-        .SHARED_MEM_SIZE(SHARED_MEM_SIZE)
+        .P_NUM_CORES(P_NUM_CORES),
+        .P_WARPS_PER_CORE(P_WARPS_PER_CORE),
+        .P_ICACHE_SIZE(P_ICACHE_SIZE),
+        .P_SHARED_MEM_SIZE(P_SHARED_MEM_SIZE)
     ) dut (
         .clk              (clk),
         .rst_n            (rst_n),

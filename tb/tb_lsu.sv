@@ -59,6 +59,7 @@ module tb_lsu;
     logic                                      gmem_req_ready;
     logic                                      gmem_resp_valid;
     logic [DATA_WIDTH-1:0]                     gmem_resp_rdata;
+    logic                                      gmem_store_complete;
     
     // Shared memory interface
     logic                                      smem_req_valid;
@@ -125,6 +126,7 @@ module tb_lsu;
         .gmem_req_ready(gmem_req_ready),
         .gmem_resp_valid(gmem_resp_valid),
         .gmem_resp_rdata(gmem_resp_rdata),
+        .gmem_store_complete(gmem_store_complete),
         .smem_req_valid(smem_req_valid),
         .smem_req_we(smem_req_we),
         .smem_req_mask(smem_req_mask),
@@ -157,29 +159,32 @@ module tb_lsu;
     
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            gmem_resp_valid <= 1'b0;
-            gmem_resp_rdata <= '0;
-            gmem_pending <= 1'b0;
+            gmem_resp_valid     <= 1'b0;
+            gmem_resp_rdata     <= '0;
+            gmem_store_complete <= 1'b0;
+            gmem_pending        <= 1'b0;
         end else begin
-            gmem_resp_valid <= 1'b0;
+            gmem_resp_valid     <= 1'b0;
+            gmem_store_complete <= 1'b0;
             
             if (gmem_req_valid && gmem_req_ready) begin
-                gmem_pending <= 1'b1;
-                gmem_pending_addr <= gmem_req_addr;
-                gmem_pending_we <= gmem_req_we;
+                gmem_pending       <= 1'b1;
+                gmem_pending_addr  <= gmem_req_addr;
+                gmem_pending_we    <= gmem_req_we;
                 gmem_pending_wdata <= gmem_req_wdata;
             end
             
             if (gmem_pending) begin
                 gmem_pending <= 1'b0;
-                gmem_resp_valid <= 1'b1;
                 
                 if (gmem_pending_we) begin
                     // Write
                     global_mem[gmem_pending_addr[12:3]] <= gmem_pending_wdata;
+                    gmem_store_complete <= 1'b1;
                 end else begin
                     // Read
                     gmem_resp_rdata <= global_mem[gmem_pending_addr[12:3]];
+                    gmem_resp_valid <= 1'b1;
                 end
             end
         end

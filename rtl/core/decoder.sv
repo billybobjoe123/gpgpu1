@@ -8,6 +8,8 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 module decoder

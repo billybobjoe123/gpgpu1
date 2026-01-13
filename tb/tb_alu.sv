@@ -66,7 +66,9 @@ module tb_alu;
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] ex_operand_b;
     logic [WARP_SIZE-1:0]                 ex_pred_a;
     logic [WARP_SIZE-1:0]                 ex_pred_b;
+    logic [WARP_SIZE-1:0][DATA_WIDTH-1:0] ex_special_data;
     exec_unit_t                           ex_select;
+    opcode_t                              ex_opcode;
     logic [FUNC_WIDTH-1:0]                ex_func;
     logic [WARP_SIZE-1:0]                 ex_active_mask;
     logic                                 ex_valid_in;
@@ -124,20 +126,22 @@ module tb_alu;
     );
     
     execution_unit u_execution_unit (
-        .clk         (clk),
-        .rst_n       (rst_n),
-        .operand_a   (ex_operand_a),
-        .operand_b   (ex_operand_b),
-        .pred_a      (ex_pred_a),
-        .pred_b      (ex_pred_b),
-        .exec_select (ex_select),
-        .func        (ex_func),
-        .active_mask (ex_active_mask),
-        .valid_in    (ex_valid_in),
-        .result      (ex_result),
-        .pred_result (ex_pred_result),
-        .valid_out   (ex_valid_out),
-        .ready       (ex_ready)
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .operand_a    (ex_operand_a),
+        .operand_b    (ex_operand_b),
+        .pred_a       (ex_pred_a),
+        .pred_b       (ex_pred_b),
+        .special_data (ex_special_data),
+        .exec_select  (ex_select),
+        .opcode       (ex_opcode),
+        .func         (ex_func),
+        .active_mask  (ex_active_mask),
+        .valid_in     (ex_valid_in),
+        .result       (ex_result),
+        .pred_result  (ex_pred_result),
+        .valid_out    (ex_valid_out),
+        .ready        (ex_ready)
     );
     
     //=========================================================================
@@ -185,7 +189,9 @@ module tb_alu;
         ex_operand_b = '0;
         ex_pred_a = '0;
         ex_pred_b = '0;
+        ex_special_data = '0;
         ex_select = EX_ALU;
+        ex_opcode = OP_ALU;
         ex_func = '0;
         ex_active_mask = '1;
         ex_valid_in = 0;

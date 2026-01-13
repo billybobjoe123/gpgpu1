@@ -8,6 +8,10 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 module alu
@@ -119,68 +123,12 @@ module alu_lane
     assign maxu_result = unsigned_lt ? b : a;
     
     //=========================================================================
-    // Count Leading Zeros (CLZ)
+    // Bit Counting Operations
     //=========================================================================
     
-    function automatic logic [6:0] count_lz(input logic [DATA_WIDTH-1:0] val);
-        integer i;
-        logic [6:0] count;
-        logic found;
-        begin
-            count = DATA_WIDTH;
-            found = 0;
-            for (i = DATA_WIDTH-1; i >= 0; i = i - 1) begin
-                if (val[i] == 1'b1 && !found) begin
-                    count = DATA_WIDTH - 1 - i;
-                    found = 1;
-                end
-            end
-            count_lz = count;
-        end
-    endfunction
-    
-    assign clz_result = {57'b0, count_lz(a)};
-    
-    //=========================================================================
-    // Count Trailing Zeros (CTZ)
-    //=========================================================================
-    
-    function automatic logic [6:0] count_tz(input logic [DATA_WIDTH-1:0] val);
-        integer i;
-        logic [6:0] count;
-        logic found;
-        begin
-            count = DATA_WIDTH;
-            found = 0;
-            for (i = 0; i < DATA_WIDTH; i = i + 1) begin
-                if (val[i] == 1'b1 && !found) begin
-                    count = i;
-                    found = 1;
-                end
-            end
-            count_tz = count;
-        end
-    endfunction
-    
-    assign ctz_result = {57'b0, count_tz(a)};
-    
-    //=========================================================================
-    // Population Count (POPC)
-    //=========================================================================
-    
-    function automatic logic [6:0] pop_count(input logic [DATA_WIDTH-1:0] val);
-        integer i;
-        logic [6:0] count;
-        begin
-            count = 0;
-            for (i = 0; i < DATA_WIDTH; i = i + 1) begin
-                count = count + val[i];
-            end
-            pop_count = count;
-        end
-    endfunction
-    
-    assign popc_result = {57'b0, pop_count(a)};
+    assign clz_result  = {57'b0, count_leading_zeros(a)};
+    assign ctz_result  = {57'b0, count_trailing_zeros(a)};
+    assign popc_result = {57'b0, population_count(a)};
     
     //=========================================================================
     // Result Multiplexer
@@ -419,8 +367,10 @@ endmodule
 module mul_div_unit
     import gpgpu_pkg::*;
 (
+    /* verilator lint_off UNUSED */
     input  logic                                   clk,
     input  logic                                   rst_n,
+    /* verilator lint_on UNUSED */
     
     // Operands
     input  logic [WARP_SIZE-1:0][DATA_WIDTH-1:0]   operand_a,

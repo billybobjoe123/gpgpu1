@@ -11,28 +11,30 @@
 // Date:        December 21, 2025
 //=============================================================================
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 module gpu_system
     import gpgpu_pkg::*;
 #(
     // GPU Parameters
-    parameter int NUM_CORES       = 4,
-    parameter int WARPS_PER_CORE  = 4,
-    parameter int ICACHE_SIZE     = 4096,
-    parameter int SHARED_MEM_SIZE = 16384,
+    parameter int P_NUM_CORES       = 4,
+    parameter int P_WARPS_PER_CORE  = 4,
+    parameter int P_ICACHE_SIZE     = 4096,
+    parameter int P_SHARED_MEM_SIZE = 16384,
     
     // L2 Cache Parameters
-    parameter int L2_SIZE_KB      = 256,
-    parameter int L2_LINE_SIZE    = 64,      // 64 bytes = 512 bits
-    parameter int L2_NUM_WAYS     = 4,
-    parameter int L2_NUM_MSHR     = 8,
+    parameter int P_L2_SIZE_KB      = 256,
+    parameter int P_L2_LINE_SIZE    = 64,      // 64 bytes = 512 bits
+    parameter int P_L2_NUM_WAYS     = 4,
+    parameter int P_L2_NUM_MSHR     = 8,
     
     // Memory Controller Parameters
-    parameter int MEM_CHANNELS    = 2,
-    parameter int MEM_BANKS       = 8,
-    parameter int MEM_ROWS        = 16384,
-    parameter int MEM_DATA_WIDTH  = 512
+    parameter int P_MEM_CHANNELS    = 2,
+    parameter int P_MEM_BANKS       = 8,
+    parameter int P_MEM_ROWS        = 16384,
+    parameter int P_MEM_DATA_WIDTH  = 512
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -56,15 +58,15 @@ module gpu_system
     // External DDR Interface (Memory Controller to DRAM)
     //=========================================================================
     
-    output logic [MEM_CHANNELS-1:0]                                 ddr_cs_n,
-    output logic [MEM_CHANNELS-1:0]                                 ddr_ras_n,
-    output logic [MEM_CHANNELS-1:0]                                 ddr_cas_n,
-    output logic [MEM_CHANNELS-1:0]                                 ddr_we_n,
-    output logic [MEM_CHANNELS-1:0][$clog2(MEM_BANKS)-1:0]          ddr_ba,
-    output logic [MEM_CHANNELS-1:0][$clog2(MEM_ROWS)-1:0]           ddr_addr,
-    output logic [MEM_CHANNELS-1:0][MEM_DATA_WIDTH-1:0]             ddr_wdata,
-    input  logic [MEM_CHANNELS-1:0][MEM_DATA_WIDTH-1:0]             ddr_rdata,
-    input  logic [MEM_CHANNELS-1:0]                                 ddr_rdata_valid,
+    output logic [P_MEM_CHANNELS-1:0]                                 ddr_cs_n,
+    output logic [P_MEM_CHANNELS-1:0]                                 ddr_ras_n,
+    output logic [P_MEM_CHANNELS-1:0]                                 ddr_cas_n,
+    output logic [P_MEM_CHANNELS-1:0]                                 ddr_we_n,
+    output logic [P_MEM_CHANNELS-1:0][$clog2(P_MEM_BANKS)-1:0]          ddr_ba,
+    output logic [P_MEM_CHANNELS-1:0][$clog2(P_MEM_ROWS)-1:0]           ddr_addr,
+    output logic [P_MEM_CHANNELS-1:0][P_MEM_DATA_WIDTH-1:0]             ddr_wdata,
+    input  logic [P_MEM_CHANNELS-1:0][P_MEM_DATA_WIDTH-1:0]             ddr_rdata,
+    input  logic [P_MEM_CHANNELS-1:0]                                 ddr_rdata_valid,
     
     //=========================================================================
     // Status Outputs
@@ -72,7 +74,7 @@ module gpu_system
     
     output logic                    gpu_busy,
     output logic                    gpu_done,
-    output logic [NUM_CORES-1:0]    cores_active,
+    output logic [P_NUM_CORES-1:0]    cores_active,
     
     // Performance counters
     output logic [31:0]             perf_cycle_count,
@@ -177,10 +179,10 @@ module gpu_system
     //=========================================================================
     
     gpu_top #(
-        .NUM_CORES(NUM_CORES),
-        .WARPS_PER_CORE(WARPS_PER_CORE),
-        .ICACHE_SIZE(ICACHE_SIZE),
-        .SHARED_MEM_SIZE(SHARED_MEM_SIZE)
+        .P_NUM_CORES(P_NUM_CORES),
+        .P_WARPS_PER_CORE(P_WARPS_PER_CORE),
+        .P_ICACHE_SIZE(P_ICACHE_SIZE),
+        .P_SHARED_MEM_SIZE(P_SHARED_MEM_SIZE)
     ) u_gpu_top (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -245,10 +247,10 @@ module gpu_system
     //=========================================================================
     
     l2_cache #(
-        .CACHE_SIZE_KB(L2_SIZE_KB),
-        .LINE_SIZE_BYTES(L2_LINE_SIZE),
-        .NUM_WAYS(L2_NUM_WAYS),
-        .NUM_MSHR(L2_NUM_MSHR)
+        .CACHE_SIZE_KB(P_L2_SIZE_KB),
+        .LINE_SIZE_BYTES(P_L2_LINE_SIZE),
+        .NUM_WAYS(P_L2_NUM_WAYS),
+        .NUM_MSHR(P_L2_NUM_MSHR)
     ) u_l2_cache (
         .clk             (clk),
         .rst_n           (rst_n),
@@ -332,11 +334,11 @@ module gpu_system
     //=========================================================================
     
     memory_controller #(
-        .NUM_CHANNELS(MEM_CHANNELS),
-        .NUM_BANKS(MEM_BANKS),
-        .NUM_ROWS(MEM_ROWS),
-        .DATA_WIDTH(MEM_DATA_WIDTH),
-        .QUEUE_DEPTH(16)
+        .P_NUM_CHANNELS(P_MEM_CHANNELS),
+        .P_NUM_BANKS(P_MEM_BANKS),
+        .P_NUM_ROWS(P_MEM_ROWS),
+        .P_DATA_WIDTH(P_MEM_DATA_WIDTH),
+        .P_QUEUE_DEPTH(16)
     ) u_memory_controller (
         .clk             (clk),
         .rst_n           (rst_n),

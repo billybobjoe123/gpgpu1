@@ -20,11 +20,11 @@ module tb_memory_subsystem;
     //=========================================================================
     
     parameter int CLK_PERIOD      = 10;
-    parameter int L2_SIZE_KB      = 64;    // Smaller for faster testing
-    parameter int L2_NUM_WAYS     = 4;
-    parameter int L2_LINE_SIZE    = 64;    // 512 bits
-    parameter int MEM_CHANNELS    = 2;
-    parameter int MEM_BANKS       = 4;
+    parameter int P_L2_SIZE_KB      = 64;    // Smaller for faster testing
+    parameter int P_L2_NUM_WAYS     = 4;
+    parameter int P_L2_LINE_SIZE    = 64;    // 512 bits
+    parameter int P_MEM_CHANNELS    = 2;
+    parameter int P_MEM_BANKS       = 4;
     
     //=========================================================================
     // Signals
@@ -101,10 +101,10 @@ module tb_memory_subsystem;
     logic [1:0]              l2_mem_bresp;
     logic [3:0]              l2_mem_bid;
     
-    // L2 performance counters
-    logic [31:0]             l2_hits;
-    logic [31:0]             l2_misses;
-    logic [31:0]             l2_writebacks;
+    // Performance counters
+    logic [31:0]             perf_l2_hits;
+    logic [31:0]             perf_l2_misses;
+    logic [31:0]             perf_l2_writebacks;
     
     //=========================================================================
     // Test Variables
@@ -122,9 +122,9 @@ module tb_memory_subsystem;
     //=========================================================================
     
     l2_cache #(
-        .CACHE_SIZE_KB(L2_SIZE_KB),
-        .NUM_WAYS(L2_NUM_WAYS),
-        .LINE_SIZE_BYTES(L2_LINE_SIZE),
+        .CACHE_SIZE_KB(P_L2_SIZE_KB),
+        .NUM_WAYS(P_L2_NUM_WAYS),
+        .LINE_SIZE_BYTES(P_L2_LINE_SIZE),
         .NUM_MSHR(4)
     ) u_l2_cache (
         .clk             (clk),
@@ -198,9 +198,9 @@ module tb_memory_subsystem;
         .mem_bresp       (l2_mem_bresp),
         .mem_bid         (l2_mem_bid),
         
-        .perf_hits       (l2_hits),
-        .perf_misses     (l2_misses),
-        .perf_writebacks (l2_writebacks)
+        .perf_hits       (perf_l2_hits),
+        .perf_misses     (perf_l2_misses),
+        .perf_writebacks (perf_l2_writebacks)
     );
     
     //=========================================================================
@@ -279,7 +279,7 @@ module tb_memory_subsystem;
                 mem_wr_data_done <= 1'b0;
             end
             
-            if (l2_mem_awvalid && l2_mem_awready && !mem_wr_pending) begin
+            if (l2_mem_awvalid && l2_mem_arready && !mem_wr_pending) begin
                 mem_wr_pending <= 1'b1;
                 mem_wr_addr    <= l2_mem_awaddr;
                 mem_wr_id      <= l2_mem_awid;
@@ -375,14 +375,14 @@ module tb_memory_subsystem;
         begin
             // Send request
             @(posedge clk);
-            req_arvalid <= 1'b1;
-            req_araddr  <= addr;
-            req_arid    <= id;
+            req_arvalid = 1'b1;
+            req_araddr  = addr;
+            req_arid    = id;
             
             // Wait for ready
             while (!req_arready) @(posedge clk);
             @(posedge clk);
-            req_arvalid <= 1'b0;
+            req_arvalid = 1'b0;
             
             // Wait for response
             while (!req_rvalid) @(posedge clk);
@@ -401,19 +401,19 @@ module tb_memory_subsystem;
         begin
             // Send address and data
             @(posedge clk);
-            req_awvalid <= 1'b1;
-            req_awaddr  <= addr;
-            req_awid    <= id;
-            req_wvalid  <= 1'b1;
-            req_wdata   <= data;
-            req_wstrb   <= strb;
-            req_wlast   <= 1'b1;
+            req_awvalid = 1'b1;
+            req_awaddr  = addr;
+            req_awid    = id;
+            req_wvalid  = 1'b1;
+            req_wdata   = data;
+            req_wstrb   = strb;
+            req_wlast   = 1'b1;
             
             // Wait for ready
             while (!(req_awready && req_wready)) @(posedge clk);
             @(posedge clk);
-            req_awvalid <= 1'b0;
-            req_wvalid  <= 1'b0;
+            req_awvalid = 1'b0;
+            req_wvalid  = 1'b0;
             
             // Wait for response
             while (!req_bvalid) @(posedge clk);
@@ -432,8 +432,8 @@ module tb_memory_subsystem;
         begin
             $display("\n--- Test: Read Miss then Hit ---");
             
-            hits_before   = l2_hits;
-            misses_before = l2_misses;
+            hits_before   = perf_l2_hits;
+            misses_before = perf_l2_misses;
             
             // First read - should miss
             do_read(64'h1000, 4'h1, read_data);
@@ -441,10 +441,10 @@ module tb_memory_subsystem;
             
             // Second read to same line - should hit
             do_read(64'h1000, 4'h2, read_data);
-            check_result("Second read hits cache", l2_hits > hits_before);
+            check_result("Second read hits cache", perf_l2_hits > hits_before);
             
             // Verify miss count increased by 1 (first access)
-            check_result("Miss count correct", l2_misses == misses_before + 1);
+            check_result("Miss count correct", perf_l2_misses == misses_before + 1);
         end
     endtask
     
@@ -494,8 +494,8 @@ module tb_memory_subsystem;
             $display("\n--- Test: Cache Eviction ---");
             
             // Calculate number of lines in cache
-            num_lines = (L2_SIZE_KB * 1024) / L2_LINE_SIZE;
-            wb_before = l2_writebacks;
+            num_lines = (P_L2_SIZE_KB * 1024) / P_L2_LINE_SIZE;
+            wb_before = perf_l2_writebacks;
             
             // Fill cache with dirty lines
             for (int i = 0; i < num_lines + 4; i++) begin
@@ -505,7 +505,7 @@ module tb_memory_subsystem;
             end
             
             // Should have caused some writebacks
-            check_result("Writebacks occurred", l2_writebacks > wb_before);
+            check_result("Writebacks occurred", perf_l2_writebacks > wb_before);
             
             // Read back a recently written line
             do_read(64'(num_lines * 64), 4'h1, read_data);
@@ -522,11 +522,11 @@ module tb_memory_subsystem;
             $display("\n--- Test: Set Associativity ---");
             
             // Calculate stride to hit same set
-            set_size = (L2_SIZE_KB * 1024) / L2_NUM_WAYS;
+            set_size = (P_L2_SIZE_KB * 1024) / P_L2_NUM_WAYS;
             stride = set_size;
             
             // Access more lines than ways (should evict)
-            for (int w = 0; w < L2_NUM_WAYS + 1; w++) begin
+            for (int w = 0; w < P_L2_NUM_WAYS + 1; w++) begin
                 logic [ADDR_WIDTH-1:0] addr = w * stride;
                 do_read(addr, 4'(w), read_data);
             end
@@ -544,14 +544,14 @@ module tb_memory_subsystem;
         begin
             $display("\n--- Test: Performance Counters ---");
             
-            total_accesses = l2_hits + l2_misses;
+            total_accesses = perf_l2_hits + perf_l2_misses;
             check_result("Hits + Misses > 0", total_accesses > 0);
             
             $display("L2 Statistics:");
-            $display("  Hits:       %0d", l2_hits);
-            $display("  Misses:     %0d", l2_misses);
-            $display("  Writebacks: %0d", l2_writebacks);
-            $display("  Hit Rate:   %0.2f%%", 100.0 * l2_hits / total_accesses);
+            $display("  Hits:       %0d", perf_l2_hits);
+            $display("  Misses:     %0d", perf_l2_misses);
+            $display("  Writebacks: %0d", perf_l2_writebacks);
+            $display("  Hit Rate:   %0.2f%%", 100.0 * perf_l2_hits / total_accesses);
         end
     endtask
     
@@ -564,9 +564,9 @@ module tb_memory_subsystem;
         $display("GPGPU-1 Memory Subsystem Testbench");
         $display("===========================================");
         $display("Configuration:");
-        $display("  L2 Cache Size: %0d KB", L2_SIZE_KB);
-        $display("  L2 Ways:       %0d", L2_NUM_WAYS);
-        $display("  Line Size:     %0d bytes", L2_LINE_SIZE);
+        $display("  L2 Cache Size: %0d KB", P_L2_SIZE_KB);
+        $display("  L2 Ways:       %0d", P_L2_NUM_WAYS);
+        $display("  Line Size:     %0d bytes", P_L2_LINE_SIZE);
         $display("===========================================");
         
         test_count = 0;

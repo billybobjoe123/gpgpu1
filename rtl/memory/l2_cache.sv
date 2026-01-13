@@ -4,6 +4,8 @@
 //=============================================================================
 // Simplified direct-mapped L2 cache for Verilator compatibility
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 module l2_cache
@@ -117,7 +119,67 @@ module l2_cache
         S_FILL_ADDR, S_FILL_DATA, S_RESP_READ, S_RESP_WRITE
     } state_t;
     
-    state_t state;
+    state_t state, next_state;
+
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= S_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            S_IDLE: begin
+                if (req_arvalid && req_arready) begin
+                    next_state = S_TAG_CHECK;
+                end else if (req_awvalid && req_awready && req_wvalid) begin
+                    next_state = S_TAG_CHECK;
+                end
+            end
+            
+            S_TAG_CHECK: begin
+                if (cache_hit) begin
+                    next_state = req_is_write ? S_HIT_WRITE : S_HIT_READ;
+                end else begin
+                    if (line_valid && line_dirty) begin
+                        next_state = S_WRITEBACK_ADDR;
+                    end else begin
+                        next_state = S_FILL_ADDR;
+                    end
+                end
+            end
+            
+            S_HIT_READ: if (req_rready) next_state = S_IDLE;
+            
+            S_HIT_WRITE: next_state = S_RESP_WRITE;
+            
+            S_RESP_WRITE: if (req_bready) next_state = S_IDLE;
+            
+            S_WRITEBACK_ADDR: if (mem_awready) next_state = S_WRITEBACK_DATA;
+            S_WRITEBACK_DATA: if (mem_wready) next_state = S_WRITEBACK_RESP;
+            S_WRITEBACK_RESP: if (mem_bvalid) next_state = S_FILL_ADDR;
+            S_FILL_ADDR: if (mem_arready) next_state = S_FILL_DATA;
+            
+            S_FILL_DATA: begin
+                if (mem_rvalid && mem_rlast) begin
+                    if (req_is_write) begin
+                        next_state = S_RESP_WRITE;
+                    end else begin
+                        next_state = S_RESP_READ;
+                    end
+                end
+            end
+            
+            S_RESP_READ: if (req_rready) next_state = S_IDLE;
+            default: next_state = S_IDLE;
+        endcase
+    end
+
     logic req_is_write;
     logic [ADDR_WIDTH-1:0] req_addr;
     logic [3:0] req_id;
@@ -151,7 +213,6 @@ module l2_cache
     
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= S_IDLE;
             req_is_write <= 1'b0;
             req_addr <= '0;
             req_id <= '0;
@@ -160,7 +221,9 @@ module l2_cache
             fill_data <= '0;
             valid_array <= '0;
             dirty_array <= '0;
+            /* verilator lint_off WIDTHCONCAT */
             tag_array <= '0;
+            /* verilator lint_on WIDTHCONCAT */
             perf_hits <= '0;
             perf_misses <= '0;
             perf_writebacks <= '0;
@@ -171,33 +234,25 @@ module l2_cache
                         req_is_write <= 1'b0;
                         req_addr <= req_araddr;
                         req_id <= req_arid;
-                        state <= S_TAG_CHECK;
                     end else if (req_awvalid && req_awready && req_wvalid) begin
                         req_is_write <= 1'b1;
                         req_addr <= req_awaddr;
                         req_id <= req_awid;
                         req_wdata_r <= req_wdata;
                         req_wstrb_r <= req_wstrb;
-                        state <= S_TAG_CHECK;
                     end
                 end
                 
                 S_TAG_CHECK: begin
                     if (cache_hit) begin
                         perf_hits <= perf_hits + 1;
-                        state <= req_is_write ? S_HIT_WRITE : S_HIT_READ;
                     end else begin
                         perf_misses <= perf_misses + 1;
                         if (line_valid && line_dirty) begin
                             perf_writebacks <= perf_writebacks + 1;
-                            state <= S_WRITEBACK_ADDR;
-                        end else begin
-                            state <= S_FILL_ADDR;
                         end
                     end
                 end
-                
-                S_HIT_READ: if (req_rready) state <= S_IDLE;
                 
                 S_HIT_WRITE: begin
                     for (int b = 0; b < 64; b++) begin
@@ -205,15 +260,7 @@ module l2_cache
                             data_array[addr_index][b*8 +: 8] <= req_wdata_r[b*8 +: 8];
                     end
                     dirty_array[addr_index] <= 1'b1;
-                    state <= S_RESP_WRITE;
                 end
-                
-                S_RESP_WRITE: if (req_bready) state <= S_IDLE;
-                
-                S_WRITEBACK_ADDR: if (mem_awready) state <= S_WRITEBACK_DATA;
-                S_WRITEBACK_DATA: if (mem_wready) state <= S_WRITEBACK_RESP;
-                S_WRITEBACK_RESP: if (mem_bvalid) state <= S_FILL_ADDR;
-                S_FILL_ADDR: if (mem_arready) state <= S_FILL_DATA;
                 
                 S_FILL_DATA: begin
                     if (mem_rvalid && mem_rlast) begin
@@ -228,17 +275,14 @@ module l2_cache
                                     data_array[addr_index][b*8 +: 8] <= mem_rdata[b*8 +: 8];
                             end
                             dirty_array[addr_index] <= 1'b1;
-                            state <= S_RESP_WRITE;
                         end else begin
                             data_array[addr_index] <= mem_rdata;
                             dirty_array[addr_index] <= 1'b0;
-                            state <= S_RESP_READ;
                         end
                     end
                 end
                 
-                S_RESP_READ: if (req_rready) state <= S_IDLE;
-                default: state <= S_IDLE;
+                default: ;
             endcase
         end
     end

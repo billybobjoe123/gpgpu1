@@ -13,6 +13,9 @@
 
 package gpgpu_pkg;
 
+    timeunit 1ns;
+    timeprecision 1ps;
+
     //=========================================================================
     // Fixed Architectural Parameters
     //=========================================================================
@@ -583,16 +586,16 @@ package gpgpu_pkg;
     endfunction
     
     // Count leading zeros
-    function automatic logic [5:0] count_leading_zeros;
+    function automatic logic [6:0] count_leading_zeros;
         input logic [DATA_WIDTH-1:0] value;
         integer i;
         logic found;
         begin
-            count_leading_zeros = DATA_WIDTH;
+            count_leading_zeros = DATA_WIDTH[6:0];
             found = 0;
             for (i = DATA_WIDTH-1; i >= 0; i = i - 1) begin
                 if (value[i] && !found) begin
-                    count_leading_zeros = DATA_WIDTH - 1 - i;
+                    count_leading_zeros = (DATA_WIDTH - 1 - i);
                     found = 1;
                 end
             end
@@ -600,16 +603,16 @@ package gpgpu_pkg;
     endfunction
     
     // Count trailing zeros
-    function automatic logic [5:0] count_trailing_zeros;
+    function automatic logic [6:0] count_trailing_zeros;
         input logic [DATA_WIDTH-1:0] value;
         integer i;
         logic found;
         begin
-            count_trailing_zeros = DATA_WIDTH;
+            count_trailing_zeros = DATA_WIDTH[6:0];
             found = 0;
             for (i = 0; i < DATA_WIDTH; i = i + 1) begin
                 if (value[i] && !found) begin
-                    count_trailing_zeros = i;
+                    count_trailing_zeros = i[6:0];
                     found = 1;
                 end
             end

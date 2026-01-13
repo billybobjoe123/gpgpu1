@@ -26,6 +26,8 @@
 // Date:        January 1, 2026
 //=============================================================================
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 module warp_vote

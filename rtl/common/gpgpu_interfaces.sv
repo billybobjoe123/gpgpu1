@@ -11,6 +11,8 @@
 `ifndef GPGPU_INTERFACES_SV
 `define GPGPU_INTERFACES_SV
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 //=============================================================================
@@ -153,9 +155,9 @@ endinterface
 //=============================================================================
 
 interface regfile_if #(
-    parameter DATA_WIDTH     = 64,
-    parameter REG_ADDR_WIDTH = 5,
-    parameter WARP_SIZE      = 8
+    parameter int DATA_WIDTH     = 64,
+    parameter int REG_ADDR_WIDTH = 5,
+    parameter int WARP_SIZE      = 8
 );
     // Read port 1
     logic [REG_ADDR_WIDTH-1:0]               rs1_addr;
@@ -193,8 +195,8 @@ endinterface
 //=============================================================================
 
 interface predfile_if #(
-    parameter PRED_ADDR_WIDTH = 3,
-    parameter WARP_SIZE       = 8
+    parameter int PRED_ADDR_WIDTH = 3,
+    parameter int WARP_SIZE       = 8
 );
     // Read port (for condition evaluation)
     logic [PRED_ADDR_WIDTH-1:0]    pred_addr;
@@ -228,9 +230,9 @@ endinterface
 //=============================================================================
 
 interface warp_sched_if #(
-    parameter WARP_ID_WIDTH = 2,
-    parameter WARP_SIZE     = 8,
-    parameter ADDR_WIDTH    = 64
+    parameter int WARP_ID_WIDTH = 2,
+    parameter int WARP_SIZE     = 8,
+    parameter int ADDR_WIDTH    = 64
 );
     // Warp selection
     logic                          warp_valid;
@@ -274,8 +276,8 @@ endinterface
 //=============================================================================
 
 interface exec_if #(
-    parameter DATA_WIDTH = 64,
-    parameter WARP_SIZE  = 8
+    parameter int DATA_WIDTH = 64,
+    parameter int WARP_SIZE  = 8
 );
     // Input operands (per thread)
     logic [WARP_SIZE-1:0][DATA_WIDTH-1:0]   operand_a;
@@ -309,10 +311,10 @@ endinterface
 
 // Fetch to Decode
 interface if_id_if #(
-    parameter INST_WIDTH = 32,
-    parameter ADDR_WIDTH = 64,
-    parameter WARP_ID_WIDTH = 2,
-    parameter WARP_SIZE = 8
+    parameter int INST_WIDTH = 32,
+    parameter int ADDR_WIDTH = 64,
+    parameter int WARP_ID_WIDTH = 2,
+    parameter int WARP_SIZE = 8
 );
     logic                          valid;
     logic [INST_WIDTH-1:0]         instruction;
@@ -335,10 +337,10 @@ endinterface
 
 // Decode to Execute (uses decoded_instr_t from package)
 interface id_ex_if #(
-    parameter DATA_WIDTH = 64,
-    parameter ADDR_WIDTH = 64,
-    parameter WARP_ID_WIDTH = 2,
-    parameter WARP_SIZE = 8
+    parameter int DATA_WIDTH = 64,
+    parameter int ADDR_WIDTH = 64,
+    parameter int WARP_ID_WIDTH = 2,
+    parameter int WARP_SIZE = 8
 );
     import gpgpu_pkg::*;
     
@@ -368,11 +370,11 @@ endinterface
 
 // Execute to Memory
 interface ex_mem_if #(
-    parameter DATA_WIDTH = 64,
-    parameter ADDR_WIDTH = 64,
-    parameter WARP_ID_WIDTH = 2,
-    parameter WARP_SIZE = 8,
-    parameter REG_ADDR_WIDTH = 5
+    parameter int DATA_WIDTH = 64,
+    parameter int ADDR_WIDTH = 64,
+    parameter int WARP_ID_WIDTH = 2,
+    parameter int WARP_SIZE = 8,
+    parameter int REG_ADDR_WIDTH = 5
 );
     import gpgpu_pkg::*;
     
@@ -418,10 +420,10 @@ endinterface
 
 // Memory to Writeback
 interface mem_wb_if #(
-    parameter DATA_WIDTH = 64,
-    parameter WARP_ID_WIDTH = 2,
-    parameter WARP_SIZE = 8,
-    parameter REG_ADDR_WIDTH = 5
+    parameter int DATA_WIDTH = 64,
+    parameter int WARP_ID_WIDTH = 2,
+    parameter int WARP_SIZE = 8,
+    parameter int REG_ADDR_WIDTH = 5
 );
     logic                                   valid;
     logic [WARP_ID_WIDTH-1:0]               warp_id;
@@ -460,9 +462,9 @@ endinterface
 //=============================================================================
 
 interface shared_mem_if #(
-    parameter ADDR_WIDTH = 14,   // 16KB = 14-bit address
-    parameter DATA_WIDTH = 64,
-    parameter WARP_SIZE  = 8
+    parameter int ADDR_WIDTH = 14,   // 16KB = 14-bit address
+    parameter int DATA_WIDTH = 64,
+    parameter int WARP_SIZE  = 8
 );
     // Request (can be multiple threads)
     logic                                   req;

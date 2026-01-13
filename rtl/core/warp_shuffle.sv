@@ -25,6 +25,10 @@
 // Date:        January 1, 2026
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 module warp_shuffle

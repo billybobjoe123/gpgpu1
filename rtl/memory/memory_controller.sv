@@ -12,17 +12,19 @@
 // Date:        December 21, 2025
 //=============================================================================
 
+`default_nettype none
+
 `include "gpgpu_defines.svh"
 
 module memory_controller
     import gpgpu_pkg::*;
 #(
-    parameter int NUM_CHANNELS     = 2,         // Memory channels
-    parameter int NUM_BANKS        = 8,         // Banks per channel
-    parameter int NUM_ROWS         = 16384,     // Rows per bank
-    parameter int ROW_BUFFER_SIZE  = 8192,      // Row buffer size in bytes
-    parameter int DATA_WIDTH       = 512,       // Data bus width
-    parameter int QUEUE_DEPTH      = 16,        // Request queue depth
+    parameter int P_NUM_CHANNELS     = 2,         // Memory channels
+    parameter int P_NUM_BANKS        = 8,         // Banks per channel
+    parameter int P_NUM_ROWS         = 16384,     // Rows per bank
+    parameter int P_ROW_BUFFER_SIZE  = 8192,      // Row buffer size in bytes
+    parameter int P_DATA_WIDTH       = 512,       // Data bus width
+    parameter int P_QUEUE_DEPTH      = 16,        // Request queue depth
     
     // Timing parameters (in cycles)
     parameter int T_RCD            = 14,        // RAS to CAS delay
@@ -52,7 +54,7 @@ module memory_controller
     // Read Data Channel
     output logic                    req_rvalid,
     input  logic                    req_rready,
-    output logic [DATA_WIDTH-1:0]   req_rdata,
+    output logic [P_DATA_WIDTH-1:0]   req_rdata,
     output logic [1:0]              req_rresp,
     output logic                    req_rlast,
     output logic [3:0]              req_rid,
@@ -69,7 +71,7 @@ module memory_controller
     // Write Data Channel
     input  logic                    req_wvalid,
     output logic                    req_wready,
-    input  logic [DATA_WIDTH-1:0]   req_wdata,
+    input  logic [P_DATA_WIDTH-1:0]   req_wdata,
     input  logic [63:0]             req_wstrb,
     input  logic                    req_wlast,
     
@@ -83,15 +85,15 @@ module memory_controller
     // External Memory Interface (simplified DDR-like)
     //=========================================================================
     
-    output logic [NUM_CHANNELS-1:0]                  ddr_cs_n,    // Chip select
-    output logic [NUM_CHANNELS-1:0]                  ddr_ras_n,   // Row address strobe
-    output logic [NUM_CHANNELS-1:0]                  ddr_cas_n,   // Column address strobe
-    output logic [NUM_CHANNELS-1:0]                  ddr_we_n,    // Write enable
-    output logic [NUM_CHANNELS-1:0][$clog2(NUM_BANKS)-1:0] ddr_ba,     // Bank address
-    output logic [NUM_CHANNELS-1:0][$clog2(NUM_ROWS)-1:0]  ddr_addr,   // Row/Column address
-    output logic [NUM_CHANNELS-1:0][DATA_WIDTH-1:0]  ddr_wdata,   // Write data
-    input  logic [NUM_CHANNELS-1:0][DATA_WIDTH-1:0]  ddr_rdata,   // Read data
-    input  logic [NUM_CHANNELS-1:0]                  ddr_rdata_valid,
+    output logic [P_NUM_CHANNELS-1:0]                  ddr_cs_n,    // Chip select
+    output logic [P_NUM_CHANNELS-1:0]                  ddr_ras_n,   // Row address strobe
+    output logic [P_NUM_CHANNELS-1:0]                  ddr_cas_n,   // Column address strobe
+    output logic [P_NUM_CHANNELS-1:0]                  ddr_we_n,    // Write enable
+    output logic [P_NUM_CHANNELS-1:0][$clog2(P_NUM_BANKS)-1:0] ddr_ba,     // Bank address
+    output logic [P_NUM_CHANNELS-1:0][$clog2(P_NUM_ROWS)-1:0]  ddr_addr,   // Row/Column address
+    output logic [P_NUM_CHANNELS-1:0][P_DATA_WIDTH-1:0]  ddr_wdata,   // Write data
+    input  logic [P_NUM_CHANNELS-1:0][P_DATA_WIDTH-1:0]  ddr_rdata,   // Read data
+    input  logic [P_NUM_CHANNELS-1:0]                  ddr_rdata_valid,
     
     //=========================================================================
     // Status/Performance
@@ -107,11 +109,11 @@ module memory_controller
     // Address Mapping
     //=========================================================================
     
-    localparam int CHANNEL_BITS = $clog2(NUM_CHANNELS);
-    localparam int BANK_BITS    = $clog2(NUM_BANKS);
-    localparam int ROW_BITS     = $clog2(NUM_ROWS);
-    localparam int COL_BITS     = $clog2(ROW_BUFFER_SIZE / (DATA_WIDTH/8));
-    localparam int OFFSET_BITS  = $clog2(DATA_WIDTH/8);
+    localparam int CHANNEL_BITS = $clog2(P_NUM_CHANNELS);
+    localparam int BANK_BITS    = $clog2(P_NUM_BANKS);
+    localparam int ROW_BITS     = $clog2(P_NUM_ROWS);
+    localparam int COL_BITS     = $clog2(P_ROW_BUFFER_SIZE / (P_DATA_WIDTH/8));
+    localparam int OFFSET_BITS  = $clog2(P_DATA_WIDTH/8);
     
     // Address breakdown: | Tag | Row | Bank | Channel | Column | Offset |
     function automatic logic [CHANNEL_BITS-1:0] get_channel(input logic [ADDR_WIDTH-1:0] addr);
@@ -140,7 +142,7 @@ module memory_controller
         logic [ADDR_WIDTH-1:0]    addr;
         logic [3:0]               req_id;
         logic [7:0]               len;
-        logic [DATA_WIDTH-1:0]    wdata;
+        logic [P_DATA_WIDTH-1:0]    wdata;
         logic [63:0]              wstrb;
         logic [CHANNEL_BITS-1:0]  channel;
         logic [BANK_BITS-1:0]     bank;
@@ -150,15 +152,15 @@ module memory_controller
         logic [15:0]              age;          // For aging/priority
     } req_entry_t;
     
-    req_entry_t req_queue [QUEUE_DEPTH];
+    req_entry_t req_queue [P_QUEUE_DEPTH];
     
-    logic [$clog2(QUEUE_DEPTH)-1:0] queue_head;
-    logic [$clog2(QUEUE_DEPTH)-1:0] queue_tail;
-    logic [$clog2(QUEUE_DEPTH):0]   queue_count;
+    logic [$clog2(P_QUEUE_DEPTH)-1:0] queue_head;
+    logic [$clog2(P_QUEUE_DEPTH)-1:0] queue_tail;
+    logic [$clog2(P_QUEUE_DEPTH):0]   queue_count;
     logic                           queue_full;
     logic                           queue_empty;
     
-    assign queue_full  = (queue_count == QUEUE_DEPTH);
+    assign queue_full  = (queue_count == P_QUEUE_DEPTH);
     assign queue_empty = (queue_count == 0);
     
     //=========================================================================
@@ -176,14 +178,14 @@ module memory_controller
     } bank_state_t;
     
     // Per-bank state
-    bank_state_t                  bank_state   [NUM_CHANNELS][NUM_BANKS];
-    logic [ROW_BITS-1:0]          open_row     [NUM_CHANNELS][NUM_BANKS];
-    logic [15:0]                  bank_timer   [NUM_CHANNELS][NUM_BANKS];  // Timing countdown
+    bank_state_t                  bank_state   [P_NUM_CHANNELS][P_NUM_BANKS];
+    logic [ROW_BITS-1:0]          open_row     [P_NUM_CHANNELS][P_NUM_BANKS];
+    logic [15:0]                  bank_timer   [P_NUM_CHANNELS][P_NUM_BANKS];  // Timing countdown
     
     // Refresh control
     logic [15:0]                  refresh_counter;
-    logic [NUM_CHANNELS-1:0]      refresh_pending;
-    logic [$clog2(NUM_BANKS)-1:0] refresh_bank;
+    logic [P_NUM_CHANNELS-1:0]      refresh_pending;
+    logic [$clog2(P_NUM_BANKS)-1:0] refresh_bank;
     
     //=========================================================================
     // Request Acceptance
@@ -199,7 +201,7 @@ module memory_controller
             queue_head  <= '0;
             queue_tail  <= '0;
             queue_count <= '0;
-            for (int i = 0; i < QUEUE_DEPTH; i++) begin
+            for (int i = 0; i < P_QUEUE_DEPTH; i++) begin
                 req_queue[i].valid <= 1'b0;
             end
         end else begin
@@ -237,7 +239,7 @@ module memory_controller
             end
             
             // Age all entries
-            for (int i = 0; i < QUEUE_DEPTH; i++) begin
+            for (int i = 0; i < P_QUEUE_DEPTH; i++) begin
                 if (req_queue[i].valid && req_queue[i].age < 16'hFFFF) begin
                     req_queue[i].age <= req_queue[i].age + 1;
                 end
@@ -253,7 +255,7 @@ module memory_controller
     // 2. Among row hits, use FCFS ordering
     // 3. If no row hits, select oldest request
     
-    logic [$clog2(QUEUE_DEPTH)-1:0] selected_req;
+    logic [$clog2(P_QUEUE_DEPTH)-1:0] selected_req;
     logic                           req_selected;
     logic                           selected_is_row_hit;
     
@@ -264,11 +266,11 @@ module memory_controller
         
         // Check each entry in queue for schedulability
         // First pass: find oldest row hit
-        for (int i = 0; i < QUEUE_DEPTH; i++) begin
+        for (int i = 0; i < P_QUEUE_DEPTH; i++) begin
             if (req_queue[i].valid) begin
-                logic [CHANNEL_BITS-1:0] ch  = req_queue[i].channel;
-                logic [BANK_BITS-1:0]    bnk = req_queue[i].bank;
-                logic [ROW_BITS-1:0]     rw  = req_queue[i].row;
+                automatic logic [CHANNEL_BITS-1:0] ch  = req_queue[i].channel;
+                automatic logic [BANK_BITS-1:0]    bnk = req_queue[i].bank;
+                automatic logic [ROW_BITS-1:0]     rw  = req_queue[i].row;
                 
                 // Check if bank is ready and row is open
                 if (bank_state[ch][bnk] == BANK_ACTIVE && 
@@ -277,7 +279,7 @@ module memory_controller
                     // Row hit!
                     if (!req_selected || !selected_is_row_hit || 
                         req_queue[i].age > req_queue[selected_req].age) begin
-                        selected_req = i[$clog2(QUEUE_DEPTH)-1:0];
+                        selected_req = i[$clog2(P_QUEUE_DEPTH)-1:0];
                         req_selected = 1'b1;
                         selected_is_row_hit = 1'b1;
                     end
@@ -287,10 +289,10 @@ module memory_controller
         
         // Second pass: if no row hit, find oldest that can be scheduled
         if (!selected_is_row_hit) begin
-            for (int i = 0; i < QUEUE_DEPTH; i++) begin
+            for (int i = 0; i < P_QUEUE_DEPTH; i++) begin
                 if (req_queue[i].valid) begin
-                    logic [CHANNEL_BITS-1:0] ch  = req_queue[i].channel;
-                    logic [BANK_BITS-1:0]    bnk = req_queue[i].bank;
+                    automatic logic [CHANNEL_BITS-1:0] ch  = req_queue[i].channel;
+                    automatic logic [BANK_BITS-1:0]    bnk = req_queue[i].bank;
                     
                     // Check if bank can accept a new command
                     if ((bank_state[ch][bnk] == BANK_IDLE || 
@@ -298,7 +300,7 @@ module memory_controller
                         bank_timer[ch][bnk] == 0 &&
                         !refresh_pending[ch]) begin
                         if (!req_selected || req_queue[i].age > req_queue[selected_req].age) begin
-                            selected_req = i[$clog2(QUEUE_DEPTH)-1:0];
+                            selected_req = i[$clog2(P_QUEUE_DEPTH)-1:0];
                             req_selected = 1'b1;
                         end
                     end
@@ -321,12 +323,12 @@ module memory_controller
         CMD_REFRESH
     } mem_cmd_t;
     
-    mem_cmd_t                     pending_cmd  [NUM_CHANNELS];
-    logic [BANK_BITS-1:0]         pending_bank [NUM_CHANNELS];
-    logic [ROW_BITS-1:0]          pending_row  [NUM_CHANNELS];
-    logic [COL_BITS-1:0]          pending_col  [NUM_CHANNELS];
-    logic [DATA_WIDTH-1:0]        pending_wdata[NUM_CHANNELS];
-    logic [3:0]                   pending_id   [NUM_CHANNELS];
+    mem_cmd_t                     pending_cmd  [P_NUM_CHANNELS];
+    logic [BANK_BITS-1:0]         pending_bank [P_NUM_CHANNELS];
+    logic [ROW_BITS-1:0]          pending_row  [P_NUM_CHANNELS];
+    logic [COL_BITS-1:0]          pending_col  [P_NUM_CHANNELS];
+    logic [P_DATA_WIDTH-1:0]        pending_wdata[P_NUM_CHANNELS];
+    logic [3:0]                   pending_id   [P_NUM_CHANNELS];
     
     // Read response tracking
     typedef struct packed {
@@ -335,14 +337,94 @@ module memory_controller
         logic [7:0]               beats_remaining;
     } pending_read_t;
     
-    pending_read_t pending_reads [NUM_CHANNELS];
+    pending_read_t pending_reads [P_NUM_CHANNELS];
     
-    // State machine per channel
+    bank_state_t next_bank_state [P_NUM_CHANNELS][P_NUM_BANKS];
+
+    // FSM State Update
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
-                for (int bnk = 0; bnk < NUM_BANKS; bnk++) begin
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
+                for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
                     bank_state[ch][bnk] <= BANK_IDLE;
+                end
+            end
+        end else begin
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
+                for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
+                    bank_state[ch][bnk] <= next_bank_state[ch][bnk];
+                end
+            end
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
+            for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
+                next_bank_state[ch][bnk] = bank_state[ch][bnk];
+            end
+        end
+
+        if (req_selected && !refresh_pending[req_queue[selected_req].channel]) begin
+            automatic logic [CHANNEL_BITS-1:0] ch  = req_queue[selected_req].channel;
+            automatic logic [BANK_BITS-1:0]    bnk = req_queue[selected_req].bank;
+            automatic logic [ROW_BITS-1:0]     row = req_queue[selected_req].row;
+            
+            case (bank_state[ch][bnk])
+                BANK_IDLE: begin
+                    next_bank_state[ch][bnk] = BANK_ACTIVATING;
+                end
+                BANK_ACTIVE: begin
+                    if (open_row[ch][bnk] == row) begin
+                        if (req_queue[selected_req].is_write) begin
+                            next_bank_state[ch][bnk] = BANK_WRITING;
+                        end else begin
+                            next_bank_state[ch][bnk] = BANK_READING;
+                        end
+                    end else begin
+                        next_bank_state[ch][bnk] = BANK_PRECHARGING;
+                    end
+                end
+                default: ;
+            endcase
+        end
+
+        for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
+            for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
+                case (bank_state[ch][bnk])
+                    BANK_ACTIVATING, BANK_READING, BANK_WRITING: begin
+                        if (bank_timer[ch][bnk] == 0) next_bank_state[ch][bnk] = BANK_ACTIVE;
+                    end
+                    BANK_PRECHARGING: begin
+                        if (bank_timer[ch][bnk] == 0) next_bank_state[ch][bnk] = BANK_IDLE;
+                    end
+                    BANK_REFRESHING: begin
+                        if (bank_timer[ch][bnk] == 0) next_bank_state[ch][bnk] = BANK_IDLE;
+                    end
+                    default: ;
+                endcase
+            end
+
+            if (refresh_pending[ch]) begin
+                automatic logic all_idle = 1'b1;
+                for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
+                    if (bank_state[ch][bnk] != BANK_IDLE) all_idle = 1'b0;
+                end
+                if (all_idle) begin
+                    for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
+                        next_bank_state[ch][bnk] = BANK_REFRESHING;
+                    end
+                end
+            end
+        end
+    end
+
+    // Sequential Logic and Outputs
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
+                for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
                     open_row[ch][bnk]   <= '0;
                     bank_timer[ch][bnk] <= '0;
                 end
@@ -352,153 +434,66 @@ module memory_controller
             end
             refresh_counter <= '0;
             refresh_bank    <= '0;
-            
             perf_read_count  <= '0;
             perf_write_count <= '0;
             perf_row_hits    <= '0;
             perf_row_misses  <= '0;
-            
         end else begin
-            // Decrement all bank timers
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
-                for (int bnk = 0; bnk < NUM_BANKS; bnk++) begin
-                    if (bank_timer[ch][bnk] > 0) begin
-                        bank_timer[ch][bnk] <= bank_timer[ch][bnk] - 1;
-                    end
+            // Decrement timers
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
+                for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
+                    if (bank_timer[ch][bnk] > 0) bank_timer[ch][bnk] <= bank_timer[ch][bnk] - 1;
                 end
-            end
-            
-            // Refresh counter
-            if (refresh_counter >= REFRESH_INTERVAL) begin
-                refresh_counter <= '0;
-                for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
-                    refresh_pending[ch] <= 1'b1;
-                end
-            end else begin
-                refresh_counter <= refresh_counter + 1;
-            end
-            
-            // Default: no command
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
                 pending_cmd[ch] <= CMD_NOP;
             end
             
-            // Schedule selected request
+            // Refresh
+            if (refresh_counter >= REFRESH_INTERVAL) begin
+                refresh_counter <= '0;
+                for (int ch = 0; ch < P_NUM_CHANNELS; ch++) refresh_pending[ch] <= 1'b1;
+            end else refresh_counter <= refresh_counter + 1;
+
             if (req_selected && !refresh_pending[req_queue[selected_req].channel]) begin
-                logic [CHANNEL_BITS-1:0] ch  = req_queue[selected_req].channel;
-                logic [BANK_BITS-1:0]    bnk = req_queue[selected_req].bank;
-                logic [ROW_BITS-1:0]     row = req_queue[selected_req].row;
-                logic [COL_BITS-1:0]     col = req_queue[selected_req].col;
+                automatic logic [CHANNEL_BITS-1:0] ch  = req_queue[selected_req].channel;
+                automatic logic [BANK_BITS-1:0]    bnk = req_queue[selected_req].bank;
+                automatic logic [ROW_BITS-1:0]     row = req_queue[selected_req].row;
+                automatic logic [COL_BITS-1:0]     col = req_queue[selected_req].col;
                 
                 case (bank_state[ch][bnk])
                     BANK_IDLE: begin
-                        // Need to activate row
-                        pending_cmd[ch]  <= CMD_ACTIVATE;
-                        pending_bank[ch] <= bnk;
-                        pending_row[ch]  <= row;
-                        
-                        bank_state[ch][bnk] <= BANK_ACTIVATING;
-                        bank_timer[ch][bnk] <= T_RCD;
-                        open_row[ch][bnk]   <= row;
-                        
-                        perf_row_misses <= perf_row_misses + 1;
+                        pending_cmd[ch] <= CMD_ACTIVATE; pending_bank[ch] <= bnk; pending_row[ch] <= row;
+                        bank_timer[ch][bnk] <= T_RCD; open_row[ch][bnk] <= row; perf_row_misses <= perf_row_misses + 1;
                     end
-                    
                     BANK_ACTIVE: begin
                         if (open_row[ch][bnk] == row) begin
-                            // Row hit - issue read/write
                             if (req_queue[selected_req].is_write) begin
-                                pending_cmd[ch]   <= CMD_WRITE;
-                                pending_wdata[ch] <= req_queue[selected_req].wdata;
-                                bank_state[ch][bnk] <= BANK_WRITING;
-                                bank_timer[ch][bnk] <= T_WR;
-                                perf_write_count <= perf_write_count + 1;
+                                pending_cmd[ch] <= CMD_WRITE; pending_wdata[ch] <= req_queue[selected_req].wdata;
+                                bank_timer[ch][bnk] <= T_WR; perf_write_count <= perf_write_count + 1;
                             end else begin
-                                pending_cmd[ch] <= CMD_READ;
-                                pending_reads[ch].valid <= 1'b1;
+                                pending_cmd[ch] <= CMD_READ; pending_reads[ch].valid <= 1'b1;
                                 pending_reads[ch].req_id <= req_queue[selected_req].req_id;
                                 pending_reads[ch].beats_remaining <= req_queue[selected_req].len;
-                                bank_state[ch][bnk] <= BANK_READING;
-                                bank_timer[ch][bnk] <= T_CL;
-                                perf_read_count <= perf_read_count + 1;
+                                bank_timer[ch][bnk] <= T_CL; perf_read_count <= perf_read_count + 1;
                             end
-                            pending_bank[ch] <= bnk;
-                            pending_col[ch]  <= col;
-                            pending_id[ch]   <= req_queue[selected_req].req_id;
-                            
-                            perf_row_hits <= perf_row_hits + 1;
-                            
-                            // Remove from queue
-                            req_queue[selected_req].valid <= 1'b0;
-                            queue_count <= queue_count - 1;
-                            
+                            pending_bank[ch] <= bnk; pending_col[ch] <= col; pending_id[ch] <= req_queue[selected_req].req_id;
+                            perf_row_hits <= perf_row_hits + 1; req_queue[selected_req].valid <= 1'b0; queue_count <= queue_count - 1;
                         end else begin
-                            // Row miss - need precharge first
-                            pending_cmd[ch]  <= CMD_PRECHARGE;
-                            pending_bank[ch] <= bnk;
-                            
-                            bank_state[ch][bnk] <= BANK_PRECHARGING;
-                            bank_timer[ch][bnk] <= T_RP;
-                            
-                            perf_row_misses <= perf_row_misses + 1;
+                            pending_cmd[ch] <= CMD_PRECHARGE; pending_bank[ch] <= bnk;
+                            bank_timer[ch][bnk] <= T_RP; perf_row_misses <= perf_row_misses + 1;
                         end
                     end
-                    
-                    BANK_ACTIVATING: begin
-                        if (bank_timer[ch][bnk] == 0) begin
-                            bank_state[ch][bnk] <= BANK_ACTIVE;
-                        end
-                    end
-                    
-                    BANK_READING: begin
-                        if (bank_timer[ch][bnk] == 0) begin
-                            bank_state[ch][bnk] <= BANK_ACTIVE;
-                        end
-                    end
-                    
-                    BANK_WRITING: begin
-                        if (bank_timer[ch][bnk] == 0) begin
-                            bank_state[ch][bnk] <= BANK_ACTIVE;
-                        end
-                    end
-                    
-                    BANK_PRECHARGING: begin
-                        if (bank_timer[ch][bnk] == 0) begin
-                            bank_state[ch][bnk] <= BANK_IDLE;
-                        end
-                    end
-                    
                     default: ;
                 endcase
             end
-            
-            // Handle refresh
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
+
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
                 if (refresh_pending[ch]) begin
-                    // Check if all banks are idle
-                    logic all_idle = 1'b1;
-                    for (int bnk = 0; bnk < NUM_BANKS; bnk++) begin
-                        if (bank_state[ch][bnk] != BANK_IDLE) begin
-                            all_idle = 1'b0;
-                        end
-                    end
-                    
+                    automatic logic all_idle = 1'b1;
+                    for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) if (bank_state[ch][bnk] != BANK_IDLE) all_idle = 1'b0;
                     if (all_idle) begin
                         pending_cmd[ch] <= CMD_REFRESH;
-                        for (int bnk = 0; bnk < NUM_BANKS; bnk++) begin
-                            bank_state[ch][bnk] <= BANK_REFRESHING;
-                            bank_timer[ch][bnk] <= T_RFC;
-                        end
+                        for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) bank_timer[ch][bnk] <= T_RFC;
                         refresh_pending[ch] <= 1'b0;
-                    end
-                end
-            end
-            
-            // Transition from refresh
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
-                for (int bnk = 0; bnk < NUM_BANKS; bnk++) begin
-                    if (bank_state[ch][bnk] == BANK_REFRESHING && bank_timer[ch][bnk] == 0) begin
-                        bank_state[ch][bnk] <= BANK_IDLE;
                     end
                 end
             end
@@ -510,7 +505,7 @@ module memory_controller
     //=========================================================================
     
     always_comb begin
-        for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
+        for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
             ddr_cs_n[ch]  = 1'b1;  // Deselect by default
             ddr_ras_n[ch] = 1'b1;
             ddr_cas_n[ch] = 1'b1;
@@ -571,7 +566,7 @@ module memory_controller
     // In practice, would need proper tracking per outstanding request
     
     logic                    resp_valid_r;
-    logic [DATA_WIDTH-1:0]   resp_data_r;
+    logic [P_DATA_WIDTH-1:0]   resp_data_r;
     logic [3:0]              resp_id_r;
     logic                    resp_last_r;
     
@@ -585,7 +580,7 @@ module memory_controller
             resp_valid_r <= 1'b0;
             
             // Check for read data from any channel
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
                 if (ddr_rdata_valid[ch] && pending_reads[ch].valid) begin
                     resp_valid_r <= 1'b1;
                     resp_data_r  <= ddr_rdata[ch];
@@ -623,7 +618,7 @@ module memory_controller
             write_resp_id      <= '0;
         end else begin
             // Generate write response after write command issued
-            for (int ch = 0; ch < NUM_CHANNELS; ch++) begin
+            for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
                 if (pending_cmd[ch] == CMD_WRITE) begin
                     write_resp_pending <= 1'b1;
                     write_resp_id      <= pending_id[ch];

@@ -11,15 +11,19 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 module gpu_top
     import gpgpu_pkg::*;
 #(
-    parameter int NUM_CORES       = 4,
-    parameter int WARPS_PER_CORE  = 4,
-    parameter int ICACHE_SIZE     = 4096,
-    parameter int SHARED_MEM_SIZE = 16384
+    parameter int P_NUM_CORES       = 4,
+    parameter int P_WARPS_PER_CORE  = 4,
+    parameter int P_ICACHE_SIZE     = 4096,
+    parameter int P_SHARED_MEM_SIZE = 16384
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -88,7 +92,7 @@ module gpu_top
     
     output logic                    gpu_busy,
     output logic                    gpu_done,
-    output logic [NUM_CORES-1:0]    cores_active,
+    output logic [P_NUM_CORES-1:0]    cores_active,
     output logic [31:0]             perf_cycle_count,
     output logic [31:0]             perf_instr_count
 );
@@ -107,60 +111,60 @@ module gpu_top
     //=========================================================================
     
     // Dispatch signals per core
-    logic [NUM_CORES-1:0]                  core_dispatch_valid;
-    logic [NUM_CORES-1:0]                  core_dispatch_ready;
-    logic [NUM_CORES-1:0][WARP_ID_WIDTH-1:0] core_dispatch_warp_id;
-    logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_dispatch_pc;
-    logic [NUM_CORES-1:0][WARP_SIZE-1:0]   core_dispatch_mask;
+    logic [P_NUM_CORES-1:0]                  core_dispatch_valid;
+    logic [P_NUM_CORES-1:0]                  core_dispatch_ready;
+    logic [P_NUM_CORES-1:0][WARP_ID_WIDTH-1:0] core_dispatch_warp_id;
+    logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_dispatch_pc;
+    logic [P_NUM_CORES-1:0][WARP_SIZE-1:0]   core_dispatch_mask;
     
     // Core status
-    logic [NUM_CORES-1:0]                  core_busy;
-    logic [NUM_CORES-1:0]                  core_all_warps_done;
-    logic [NUM_CORES-1:0][WARPS_PER_CORE-1:0] core_warps_active;
+    logic [P_NUM_CORES-1:0]                  core_busy;
+    logic [P_NUM_CORES-1:0]                  core_all_warps_done;
+    logic [P_NUM_CORES-1:0][P_WARPS_PER_CORE-1:0] core_warps_active;
     
     // Core memory interfaces
-    logic [NUM_CORES-1:0]                  core_gmem_arvalid;
-    logic [NUM_CORES-1:0]                  core_gmem_arready;
-    logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_gmem_araddr;
-    logic [NUM_CORES-1:0][7:0]             core_gmem_arlen;
-    logic [NUM_CORES-1:0][2:0]             core_gmem_arsize;
+    logic [P_NUM_CORES-1:0]                  core_gmem_arvalid;
+    logic [P_NUM_CORES-1:0]                  core_gmem_arready;
+    logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_gmem_araddr;
+    logic [P_NUM_CORES-1:0][7:0]             core_gmem_arlen;
+    logic [P_NUM_CORES-1:0][2:0]             core_gmem_arsize;
     
-    logic [NUM_CORES-1:0]                  core_gmem_rvalid;
-    logic [NUM_CORES-1:0]                  core_gmem_rready;
-    logic [NUM_CORES-1:0][DATA_WIDTH-1:0]  core_gmem_rdata;
-    logic [NUM_CORES-1:0][1:0]             core_gmem_rresp;
-    logic [NUM_CORES-1:0]                  core_gmem_rlast;
+    logic [P_NUM_CORES-1:0]                  core_gmem_rvalid;
+    logic [P_NUM_CORES-1:0]                  core_gmem_rready;
+    logic [P_NUM_CORES-1:0][DATA_WIDTH-1:0]  core_gmem_rdata;
+    logic [P_NUM_CORES-1:0][1:0]             core_gmem_rresp;
+    logic [P_NUM_CORES-1:0]                  core_gmem_rlast;
     
-    logic [NUM_CORES-1:0]                  core_gmem_awvalid;
-    logic [NUM_CORES-1:0]                  core_gmem_awready;
-    logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_gmem_awaddr;
-    logic [NUM_CORES-1:0][7:0]             core_gmem_awlen;
-    logic [NUM_CORES-1:0][2:0]             core_gmem_awsize;
+    logic [P_NUM_CORES-1:0]                  core_gmem_awvalid;
+    logic [P_NUM_CORES-1:0]                  core_gmem_awready;
+    logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_gmem_awaddr;
+    logic [P_NUM_CORES-1:0][7:0]             core_gmem_awlen;
+    logic [P_NUM_CORES-1:0][2:0]             core_gmem_awsize;
     
-    logic [NUM_CORES-1:0]                  core_gmem_wvalid;
-    logic [NUM_CORES-1:0]                  core_gmem_wready;
-    logic [NUM_CORES-1:0][DATA_WIDTH-1:0]  core_gmem_wdata;
-    logic [NUM_CORES-1:0][7:0]             core_gmem_wstrb;
-    logic [NUM_CORES-1:0]                  core_gmem_wlast;
+    logic [P_NUM_CORES-1:0]                  core_gmem_wvalid;
+    logic [P_NUM_CORES-1:0]                  core_gmem_wready;
+    logic [P_NUM_CORES-1:0][DATA_WIDTH-1:0]  core_gmem_wdata;
+    logic [P_NUM_CORES-1:0][7:0]             core_gmem_wstrb;
+    logic [P_NUM_CORES-1:0]                  core_gmem_wlast;
     
-    logic [NUM_CORES-1:0]                  core_gmem_bvalid;
-    logic [NUM_CORES-1:0]                  core_gmem_bready;
-    logic [NUM_CORES-1:0][1:0]             core_gmem_bresp;
+    logic [P_NUM_CORES-1:0]                  core_gmem_bvalid;
+    logic [P_NUM_CORES-1:0]                  core_gmem_bready;
+    logic [P_NUM_CORES-1:0][1:0]             core_gmem_bresp;
     
     // Instruction memory interfaces per core
-    logic [NUM_CORES-1:0]                  core_imem_req_valid;
-    logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_imem_req_addr;
-    logic [NUM_CORES-1:0]                  core_imem_req_ready;
-    logic [NUM_CORES-1:0]                  core_imem_resp_valid;
-    logic [NUM_CORES-1:0][255:0]           core_imem_resp_data;
+    logic [P_NUM_CORES-1:0]                  core_imem_req_valid;
+    logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_imem_req_addr;
+    logic [P_NUM_CORES-1:0]                  core_imem_req_ready;
+    logic [P_NUM_CORES-1:0]                  core_imem_resp_valid;
+    logic [P_NUM_CORES-1:0][255:0]           core_imem_resp_data;
     
     //=========================================================================
     // Dispatch Unit
     //=========================================================================
     
     dispatch_unit #(
-        .NUM_CORES(NUM_CORES),
-        .WARPS_PER_CORE(WARPS_PER_CORE)
+        .P_NUM_CORES(P_NUM_CORES),
+        .P_WARPS_PER_CORE(P_WARPS_PER_CORE)
     ) u_dispatch (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -198,12 +202,12 @@ module gpu_top
     //=========================================================================
     
     generate
-        for (genvar c = 0; c < NUM_CORES; c++) begin : gen_cores
+        for (genvar c = 0; c < P_NUM_CORES; c++) begin : gen_cores
             gpu_core #(
                 .CORE_ID(c),
-                .NUM_WARPS(WARPS_PER_CORE),
-                .ICACHE_SIZE(ICACHE_SIZE),
-                .SHARED_MEM_SIZE(SHARED_MEM_SIZE)
+                .NUM_WARPS(P_WARPS_PER_CORE),
+                .P_ICACHE_SIZE(P_ICACHE_SIZE),
+                .P_SHARED_MEM_SIZE(P_SHARED_MEM_SIZE)
             ) u_core (
                 .clk              (clk),
                 .rst_n            (rst_n),
@@ -264,7 +268,7 @@ module gpu_top
     //=========================================================================
     
     memory_arbiter #(
-        .NUM_CORES(NUM_CORES)
+        .P_NUM_CORES(P_NUM_CORES)
     ) u_mem_arbiter (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -376,8 +380,8 @@ endmodule
 module dispatch_unit
     import gpgpu_pkg::*;
 #(
-    parameter int NUM_CORES      = 4,
-    parameter int WARPS_PER_CORE = 4
+    parameter int P_NUM_CORES      = 4,
+    parameter int P_WARPS_PER_CORE = 4
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -395,15 +399,15 @@ module dispatch_unit
     input  logic [15:0]             cmd_block_dim_z,
     
     // Core dispatch interfaces
-    output logic [NUM_CORES-1:0]                     core_dispatch_valid,
-    input  logic [NUM_CORES-1:0]                     core_dispatch_ready,
-    output logic [NUM_CORES-1:0][WARP_ID_WIDTH-1:0]  core_dispatch_warp_id,
-    output logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]     core_dispatch_pc,
-    output logic [NUM_CORES-1:0][WARP_SIZE-1:0]      core_dispatch_mask,
+    output logic [P_NUM_CORES-1:0]                     core_dispatch_valid,
+    input  logic [P_NUM_CORES-1:0]                     core_dispatch_ready,
+    output logic [P_NUM_CORES-1:0][WARP_ID_WIDTH-1:0]  core_dispatch_warp_id,
+    output logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]     core_dispatch_pc,
+    output logic [P_NUM_CORES-1:0][WARP_SIZE-1:0]      core_dispatch_mask,
     
     // Core status
-    input  logic [NUM_CORES-1:0]    core_busy,
-    input  logic [NUM_CORES-1:0]    core_all_warps_done,
+    input  logic [P_NUM_CORES-1:0]    core_busy,
+    input  logic [P_NUM_CORES-1:0]    core_all_warps_done,
     
     // Status
     output logic                    dispatch_busy,
@@ -433,7 +437,53 @@ module dispatch_unit
     } disp_state_t;
     
     disp_state_t state, next_state;
-      //=========================================================================
+
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= DISP_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            DISP_IDLE: begin
+                if (cmd_valid && cmd_opcode == CMD_LAUNCH) begin
+                    next_state = DISP_LAUNCH;
+                end
+            end
+            DISP_LAUNCH: begin
+                next_state = DISP_DISPATCH;
+            end
+            DISP_DISPATCH: begin
+                if (blocks_dispatched >= total_blocks && !dispatch_pending) begin
+                    next_state = DISP_WAIT_DONE;
+                end else if (!any_core_available && !dispatch_pending) begin
+                    next_state = DISP_WAIT_CORE;
+                end
+            end
+            DISP_WAIT_CORE: begin
+                if (any_core_available) begin
+                    next_state = DISP_DISPATCH;
+                end
+            end
+            DISP_WAIT_DONE: begin
+                if (&core_all_warps_done) begin
+                    next_state = DISP_DONE;
+                end
+            end
+            DISP_DONE: begin
+                next_state = DISP_IDLE;
+            end
+            default: next_state = DISP_IDLE;
+        endcase
+    end
+
+    //=========================================================================
     // Registers
     //=========================================================================
     
@@ -455,7 +505,7 @@ module dispatch_unit
     logic [31:0]            warps_per_block;
     
     // Core selection - dispatch ONE warp at a time
-    logic [$clog2(NUM_CORES)-1:0] current_core;
+    logic [$clog2(P_NUM_CORES)-1:0] current_core;
     logic [WARP_ID_WIDTH-1:0]     current_warp;
     logic                         dispatch_pending;  // Waiting for core to accept
     
@@ -467,74 +517,21 @@ module dispatch_unit
     assign warps_per_block = (threads_per_block + WARP_SIZE - 1) / WARP_SIZE;
     
     // Find first available core
-    logic [NUM_CORES-1:0] core_available;
+    logic [P_NUM_CORES-1:0] core_available;
     logic                 any_core_available;
-    logic [$clog2(NUM_CORES)-1:0] next_available_core;
+    logic [$clog2(P_NUM_CORES)-1:0] next_available_core;
     
     always_comb begin
         core_available = core_all_warps_done & core_dispatch_ready;
         any_core_available = |core_available;
         
         next_available_core = '0;
-        for (int i = 0; i < NUM_CORES; i++) begin
+        for (int i = 0; i < P_NUM_CORES; i++) begin
             if (core_available[i]) begin
-                next_available_core = i[$clog2(NUM_CORES)-1:0];
+                next_available_core = i[$clog2(P_NUM_CORES)-1:0];
                 break;
             end
         end
-    end
-    
-    //=========================================================================
-    // State Machine
-    //=========================================================================
-    
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state <= DISP_IDLE;
-        end else begin
-            state <= next_state;
-        end
-    end
-      always_comb begin
-        next_state = state;
-        
-        case (state)
-            DISP_IDLE: begin
-                if (cmd_valid && cmd_opcode == CMD_LAUNCH) begin
-                    next_state = DISP_LAUNCH;
-                end
-            end
-            
-            DISP_LAUNCH: begin
-                next_state = DISP_DISPATCH;
-            end
-            
-            DISP_DISPATCH: begin
-                if (blocks_dispatched >= total_blocks && !dispatch_pending) begin
-                    next_state = DISP_WAIT_DONE;
-                end else if (!any_core_available && !dispatch_pending) begin
-                    next_state = DISP_WAIT_CORE;
-                end
-            end
-            
-            DISP_WAIT_CORE: begin
-                if (any_core_available) begin
-                    next_state = DISP_DISPATCH;
-                end
-            end
-            
-            DISP_WAIT_DONE: begin
-                if (&core_all_warps_done) begin
-                    next_state = DISP_DONE;
-                end
-            end
-            
-            DISP_DONE: begin
-                next_state = DISP_IDLE;
-            end
-            
-            default: next_state = DISP_IDLE;
-        endcase
     end
       //=========================================================================
     // Dispatch Logic
@@ -559,7 +556,7 @@ module dispatch_unit
             current_warp      <= '0;
             dispatch_pending  <= 1'b0;
             
-            for (int i = 0; i < NUM_CORES; i++) begin
+            for (int i = 0; i < P_NUM_CORES; i++) begin
                 core_dispatch_valid[i]   <= 1'b0;
                 core_dispatch_warp_id[i] <= '0;
                 core_dispatch_pc[i]      <= '0;
@@ -567,7 +564,7 @@ module dispatch_unit
             end
         end else begin
             // Clear dispatch valid when core accepts (handshake complete)
-            for (int i = 0; i < NUM_CORES; i++) begin
+            for (int i = 0; i < P_NUM_CORES; i++) begin
                 if (core_dispatch_valid[i] && core_dispatch_ready[i]) begin
                     core_dispatch_valid[i] <= 1'b0;
                     dispatch_pending <= 1'b0;
@@ -657,7 +654,7 @@ endmodule
 module memory_arbiter
     import gpgpu_pkg::*;
 #(
-    parameter int NUM_CORES = 4
+    parameter int P_NUM_CORES = 4
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -666,43 +663,43 @@ module memory_arbiter
     // Core Data Memory Interfaces
     //=========================================================================
     
-    input  logic [NUM_CORES-1:0]                  core_arvalid,
-    output logic [NUM_CORES-1:0]                  core_arready,
-    input  logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_araddr,
-    input  logic [NUM_CORES-1:0][7:0]             core_arlen,
-    input  logic [NUM_CORES-1:0][2:0]             core_arsize,
+    input  logic [P_NUM_CORES-1:0]                  core_arvalid,
+    output logic [P_NUM_CORES-1:0]                  core_arready,
+    input  logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_araddr,
+    input  logic [P_NUM_CORES-1:0][7:0]             core_arlen,
+    input  logic [P_NUM_CORES-1:0][2:0]             core_arsize,
     
-    output logic [NUM_CORES-1:0]                  core_rvalid,
-    input  logic [NUM_CORES-1:0]                  core_rready,
-    output logic [NUM_CORES-1:0][DATA_WIDTH-1:0]  core_rdata,
-    output logic [NUM_CORES-1:0][1:0]             core_rresp,
-    output logic [NUM_CORES-1:0]                  core_rlast,
+    output logic [P_NUM_CORES-1:0]                  core_rvalid,
+    input  logic [P_NUM_CORES-1:0]                  core_rready,
+    output logic [P_NUM_CORES-1:0][DATA_WIDTH-1:0]  core_rdata,
+    output logic [P_NUM_CORES-1:0][1:0]             core_rresp,
+    output logic [P_NUM_CORES-1:0]                  core_rlast,
     
-    input  logic [NUM_CORES-1:0]                  core_awvalid,
-    output logic [NUM_CORES-1:0]                  core_awready,
-    input  logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_awaddr,
-    input  logic [NUM_CORES-1:0][7:0]             core_awlen,
-    input  logic [NUM_CORES-1:0][2:0]             core_awsize,
+    input  logic [P_NUM_CORES-1:0]                  core_awvalid,
+    output logic [P_NUM_CORES-1:0]                  core_awready,
+    input  logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_awaddr,
+    input  logic [P_NUM_CORES-1:0][7:0]             core_awlen,
+    input  logic [P_NUM_CORES-1:0][2:0]             core_awsize,
     
-    input  logic [NUM_CORES-1:0]                  core_wvalid,
-    output logic [NUM_CORES-1:0]                  core_wready,
-    input  logic [NUM_CORES-1:0][DATA_WIDTH-1:0]  core_wdata,
-    input  logic [NUM_CORES-1:0][7:0]             core_wstrb,
-    input  logic [NUM_CORES-1:0]                  core_wlast,
+    input  logic [P_NUM_CORES-1:0]                  core_wvalid,
+    output logic [P_NUM_CORES-1:0]                  core_wready,
+    input  logic [P_NUM_CORES-1:0][DATA_WIDTH-1:0]  core_wdata,
+    input  logic [P_NUM_CORES-1:0][7:0]             core_wstrb,
+    input  logic [P_NUM_CORES-1:0]                  core_wlast,
     
-    output logic [NUM_CORES-1:0]                  core_bvalid,
-    input  logic [NUM_CORES-1:0]                  core_bready,
-    output logic [NUM_CORES-1:0][1:0]             core_bresp,
+    output logic [P_NUM_CORES-1:0]                  core_bvalid,
+    input  logic [P_NUM_CORES-1:0]                  core_bready,
+    output logic [P_NUM_CORES-1:0][1:0]             core_bresp,
     
     //=========================================================================
     // Core Instruction Memory Interfaces
     //=========================================================================
     
-    input  logic [NUM_CORES-1:0]                  core_imem_req_valid,
-    input  logic [NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_imem_req_addr,
-    output logic [NUM_CORES-1:0]                  core_imem_req_ready,
-    output logic [NUM_CORES-1:0]                  core_imem_resp_valid,
-    output logic [NUM_CORES-1:0][255:0]           core_imem_resp_data,
+    input  logic [P_NUM_CORES-1:0]                  core_imem_req_valid,
+    input  logic [P_NUM_CORES-1:0][ADDR_WIDTH-1:0]  core_imem_req_addr,
+    output logic [P_NUM_CORES-1:0]                  core_imem_req_ready,
+    output logic [P_NUM_CORES-1:0]                  core_imem_resp_valid,
+    output logic [P_NUM_CORES-1:0][255:0]           core_imem_resp_data,
     
     //=========================================================================
     // External AXI Interface
@@ -758,24 +755,67 @@ module memory_arbiter
         ARB_IMEM_RESP
     } arb_state_t;
     
-    arb_state_t state;
+    arb_state_t state, next_state;
+
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= ARB_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            ARB_IDLE: begin
+                if (any_imem) next_state = ARB_IMEM_REQ;
+                else if (any_data_read) next_state = ARB_READ_ADDR;
+                else if (any_data_write) next_state = ARB_WRITE_ADDR;
+            end
+            ARB_READ_ADDR: begin
+                if (axi_arready) next_state = ARB_READ_DATA;
+            end
+            ARB_READ_DATA: begin
+                if (axi_rvalid && axi_rlast) next_state = ARB_IDLE;
+            end
+            ARB_WRITE_ADDR: begin
+                if (axi_awready) next_state = ARB_WRITE_DATA;
+            end
+            ARB_WRITE_DATA: begin
+                if (axi_wready && core_wlast[granted_core]) next_state = ARB_WRITE_RESP;
+            end
+            ARB_WRITE_RESP: begin
+                if (axi_bvalid) next_state = ARB_IDLE;
+            end
+            ARB_IMEM_REQ: begin
+                if (axi_arready) next_state = ARB_IMEM_RESP;
+            end
+            ARB_IMEM_RESP: begin
+                if (axi_rvalid && axi_rlast) next_state = ARB_IDLE;
+            end
+            default: next_state = ARB_IDLE;
+        endcase
+    end
     
     // Current grant
-    logic [$clog2(NUM_CORES)-1:0] granted_core;
+    logic [$clog2(P_NUM_CORES)-1:0] granted_core;
     logic                         is_imem_req;
     logic [ADDR_WIDTH-1:0]        imem_req_addr_r;  // Saved imem request address
     logic [ADDR_WIDTH-1:0]        write_addr_r;     // Saved write address for data positioning
     
     // Round-robin priority
-    logic [$clog2(NUM_CORES)-1:0] rr_priority;
+    logic [$clog2(P_NUM_CORES)-1:0] rr_priority;
     
     //=========================================================================
     // Request Selection (Round-Robin)
     //=========================================================================
     
-    logic [NUM_CORES-1:0] data_read_req;
-    logic [NUM_CORES-1:0] data_write_req;
-    logic [NUM_CORES-1:0] imem_req;
+    logic [P_NUM_CORES-1:0] data_read_req;
+    logic [P_NUM_CORES-1:0] data_write_req;
+    logic [P_NUM_CORES-1:0] imem_req;
     logic                 any_data_read;
     logic                 any_data_write;
     logic                 any_imem;
@@ -788,13 +828,13 @@ module memory_arbiter
     assign any_imem       = |imem_req;
     
     // Find next requestor (round-robin)
-    function automatic logic [$clog2(NUM_CORES)-1:0] find_next_req(
-        input logic [NUM_CORES-1:0] requests,
-        input logic [$clog2(NUM_CORES)-1:0] priority_start
+    function automatic logic [$clog2(P_NUM_CORES)-1:0] find_next_req(
+        input logic [P_NUM_CORES-1:0] requests,
+        input logic [$clog2(P_NUM_CORES)-1:0] priority_start
     );
-        for (int i = 0; i < NUM_CORES; i++) begin
-            logic [$clog2(NUM_CORES)-1:0] idx;
-            idx = (priority_start + i) % NUM_CORES;
+        for (int i = 0; i < P_NUM_CORES; i++) begin
+            logic [$clog2(P_NUM_CORES)-1:0] idx;
+            idx = (priority_start + i) % P_NUM_CORES;
             if (requests[idx]) begin
                 return idx;
             end
@@ -802,13 +842,9 @@ module memory_arbiter
         return '0;
     endfunction
     
-    //=========================================================================
-    // State Machine
-    //=========================================================================
-    
+    // Sequential Logic and Outputs
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state           <= ARB_IDLE;
             granted_core    <= '0;
             is_imem_req     <= 1'b0;
             rr_priority     <= '0;
@@ -817,74 +853,27 @@ module memory_arbiter
         end else begin
             case (state)
                 ARB_IDLE: begin
-                    // Priority: instruction fetch > data read > data write
                     if (any_imem) begin
-                        automatic logic [$clog2(NUM_CORES)-1:0] next_core;
+                        automatic logic [$clog2(P_NUM_CORES)-1:0] next_core;
                         next_core = find_next_req(imem_req, rr_priority);
-                        granted_core    <= next_core;
-                        is_imem_req     <= 1'b1;
-                        imem_req_addr_r <= core_imem_req_addr[next_core];  // Save request address
-                        state           <= ARB_IMEM_REQ;
+                        granted_core <= next_core;
+                        is_imem_req <= 1'b1;
+                        imem_req_addr_r <= core_imem_req_addr[next_core];
                     end else if (any_data_read) begin
                         granted_core <= find_next_req(data_read_req, rr_priority);
-                        is_imem_req  <= 1'b0;
-                        state        <= ARB_READ_ADDR;
+                        is_imem_req <= 1'b0;
                     end else if (any_data_write) begin
-                        automatic logic [$clog2(NUM_CORES)-1:0] next_core;
+                        automatic logic [$clog2(P_NUM_CORES)-1:0] next_core;
                         next_core = find_next_req(data_write_req, rr_priority);
                         granted_core <= next_core;
-                        is_imem_req  <= 1'b0;
-                        write_addr_r <= core_awaddr[next_core];  // Save write address
-                        state        <= ARB_WRITE_ADDR;
+                        is_imem_req <= 1'b0;
+                        write_addr_r <= core_awaddr[next_core];
                     end
                 end
-                
-                ARB_READ_ADDR: begin
-                    if (axi_arready) begin
-                        state <= ARB_READ_DATA;
-                    end
-                end
-                
-                ARB_READ_DATA: begin
-                    if (axi_rvalid && axi_rlast) begin
-                        rr_priority <= granted_core + 1;
-                        state <= ARB_IDLE;
-                    end
-                end
-                
-                ARB_WRITE_ADDR: begin
-                    if (axi_awready) begin
-                        state <= ARB_WRITE_DATA;
-                    end
-                end
-                
-                ARB_WRITE_DATA: begin
-                    if (axi_wready && core_wlast[granted_core]) begin
-                        state <= ARB_WRITE_RESP;
-                    end
-                end
-                
-                ARB_WRITE_RESP: begin
-                    if (axi_bvalid) begin
-                        rr_priority <= granted_core + 1;
-                        state <= ARB_IDLE;
-                    end
-                end
-                
-                ARB_IMEM_REQ: begin
-                    if (axi_arready) begin
-                        state <= ARB_IMEM_RESP;
-                    end
-                end
-                
-                ARB_IMEM_RESP: begin
-                    if (axi_rvalid && axi_rlast) begin
-                        rr_priority <= granted_core + 1;
-                        state <= ARB_IDLE;
-                    end
-                end
-                
-                default: state <= ARB_IDLE;
+                ARB_READ_DATA: if (axi_rvalid && axi_rlast) rr_priority <= granted_core + 1;
+                ARB_WRITE_RESP: if (axi_bvalid) rr_priority <= granted_core + 1;
+                ARB_IMEM_RESP: if (axi_rvalid && axi_rlast) rr_priority <= granted_core + 1;
+                default: ;
             endcase
         end
     end
@@ -977,7 +966,7 @@ module memory_arbiter
     
     always_comb begin
         // Default: no response to any core
-        for (int i = 0; i < NUM_CORES; i++) begin
+        for (int i = 0; i < P_NUM_CORES; i++) begin
             core_arready[i] = 1'b0;
             core_rvalid[i]  = 1'b0;
             core_rdata[i]   = '0;

@@ -20,9 +20,9 @@ module tb_gpu_core;
     //=========================================================================
     
     parameter int CORE_ID         = 0;
-    parameter int NUM_WARPS       = WARPS_PER_CORE;
-    parameter int ICACHE_SIZE     = 4096;
-    parameter int SHARED_MEM_SIZE = 16384;
+    parameter int P_NUM_WARPS       = WARPS_PER_CORE;
+    parameter int P_ICACHE_SIZE     = 4096;
+    parameter int P_SHARED_MEM_SIZE = 16384;
     parameter int CLK_PERIOD      = 10;
     
     //=========================================================================
@@ -76,7 +76,7 @@ module tb_gpu_core;
     logic [255:0]                   imem_resp_data;
     
     // Status
-    logic [NUM_WARPS-1:0]           warps_active;
+    logic [P_NUM_WARPS-1:0]           warps_active;
     logic                           core_busy;
     logic                           all_warps_done;
     
@@ -100,9 +100,9 @@ module tb_gpu_core;
     
     gpu_core #(
         .CORE_ID(CORE_ID),
-        .NUM_WARPS(NUM_WARPS),
-        .ICACHE_SIZE(ICACHE_SIZE),
-        .SHARED_MEM_SIZE(SHARED_MEM_SIZE)
+        .NUM_WARPS(P_NUM_WARPS),
+        .P_ICACHE_SIZE(P_ICACHE_SIZE),
+        .P_SHARED_MEM_SIZE(P_SHARED_MEM_SIZE)
     ) dut (
         .clk              (clk),
         .rst_n            (rst_n),

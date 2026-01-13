@@ -9,6 +9,10 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 //=============================================================================
@@ -18,10 +22,10 @@
 module icache
     import gpgpu_pkg::*;
 #(
-    parameter int CACHE_SIZE    = 4096,         // 4KB cache
-    parameter int LINE_SIZE     = 32,           // 32 bytes per line (8 instructions)
-    parameter int ADDR_WIDTH    = 64,
-    parameter int INST_WIDTH    = 32
+    parameter int CACHE_SIZE      = 4096,         // 4KB cache
+    parameter int LINE_SIZE       = 32,           // 32 bytes per line (8 instructions)
+    parameter int P_ADDR_WIDTH    = 64,
+    parameter int P_INST_WIDTH    = 32
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -52,8 +56,8 @@ module icache
     localparam int NUM_LINES     = CACHE_SIZE / LINE_SIZE;      // 128 lines
     localparam int INDEX_BITS    = $clog2(NUM_LINES);           // 7 bits
     localparam int OFFSET_BITS   = $clog2(LINE_SIZE);           // 5 bits
-    localparam int TAG_BITS      = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;
-    localparam int INSTS_PER_LINE = LINE_SIZE / (INST_WIDTH/8); // 8 instructions
+    localparam int TAG_BITS      = P_ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;
+    localparam int INSTS_PER_LINE = LINE_SIZE / (P_INST_WIDTH/8); // 8 instructions
     
     // Cache storage
     logic [TAG_BITS-1:0]       tag_array   [0:NUM_LINES-1];
@@ -66,7 +70,7 @@ module icache
     logic [OFFSET_BITS-1:0]    req_offset;
     logic [2:0]                req_word_sel;  // Which 32-bit word within line
     
-    assign req_tag     = req_addr[ADDR_WIDTH-1 : INDEX_BITS+OFFSET_BITS];
+    assign req_tag     = req_addr[P_ADDR_WIDTH-1 : INDEX_BITS+OFFSET_BITS];
     assign req_index   = req_addr[INDEX_BITS+OFFSET_BITS-1 : OFFSET_BITS];
     assign req_offset  = req_addr[OFFSET_BITS-1 : 0];
     assign req_word_sel = req_addr[4:2];  // Bits [4:2] select 32-bit word
@@ -91,9 +95,64 @@ module icache
     } state_t;
     
     state_t state, next_state;
+
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= S_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            S_IDLE: begin
+                if (flush) begin
+                    next_state = S_FLUSH;
+                end else if (req_valid) begin
+                    next_state = S_LOOKUP;
+                end
+            end
+            
+            S_LOOKUP: begin
+                if (cache_hit) begin
+                    next_state = S_IDLE;
+                end else begin
+                    next_state = S_MISS_REQ;
+                end
+            end
+            
+            S_MISS_REQ: begin
+                if (mem_req_ready) begin
+                    next_state = S_MISS_WAIT;
+                end
+            end
+            
+            S_MISS_WAIT: begin
+                if (mem_resp_valid) begin
+                    next_state = S_REFILL;
+                end
+            end
+            
+            S_REFILL: begin
+                next_state = S_IDLE;
+            end
+            
+            S_FLUSH: begin
+                if (flush_counter == NUM_LINES - 1) begin
+                    next_state = S_IDLE;
+                end
+            end
+            
+            default: next_state = S_IDLE;
+        endcase
+    end
     
     // Registered request
-    logic [ADDR_WIDTH-1:0] req_addr_r;
+    logic [P_ADDR_WIDTH-1:0] req_addr_r;
     logic [TAG_BITS-1:0]   req_tag_r;
     logic [INDEX_BITS-1:0] req_index_r;
     logic [2:0]            req_word_sel_r;
@@ -104,74 +163,49 @@ module icache
     // Flush counter
     logic [INDEX_BITS-1:0] flush_counter;
     
-    // State machine
+    // Registered FSM Outputs and Data
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= S_IDLE;
             req_addr_r <= '0;
             req_tag_r <= '0;
             req_index_r <= '0;
             req_word_sel_r <= '0;
             flush_counter <= '0;
             mem_resp_data_r <= '0;
-            
-            // Initialize valid bits (packed array)
             valid_array <= '0;
         end else begin
             case (state)
                 S_IDLE: begin
                     if (flush) begin
-                        state <= S_FLUSH;
                         flush_counter <= '0;
                     end else if (req_valid) begin
                         req_addr_r <= req_addr;
                         req_tag_r <= req_tag;
                         req_index_r <= req_index;
                         req_word_sel_r <= req_word_sel;
-                        state <= S_LOOKUP;
-                    end
-                end
-                
-                S_LOOKUP: begin
-                    if (cache_hit) begin
-                        state <= S_IDLE;
-                    end else begin
-                        state <= S_MISS_REQ;
-                    end
-                end
-                
-                S_MISS_REQ: begin
-                    if (mem_req_ready) begin
-                        state <= S_MISS_WAIT;
                     end
                 end
                 
                 S_MISS_WAIT: begin
                     if (mem_resp_valid) begin
-                        // Capture response data when it's valid
                         mem_resp_data_r <= mem_resp_data;
-                        state <= S_REFILL;
                     end
                 end
                 
                 S_REFILL: begin
-                    // Write to cache using captured data
                     tag_array[req_index_r] <= req_tag_r;
                     valid_array[req_index_r] <= 1'b1;
                     data_array[req_index_r] <= mem_resp_data_r;
-                    state <= S_IDLE;
                 end
                 
                 S_FLUSH: begin
                     valid_array[flush_counter] <= 1'b0;
-                    if (flush_counter == NUM_LINES - 1) begin
-                        state <= S_IDLE;
-                    end else begin
+                    if (flush_counter != NUM_LINES - 1) begin
                         flush_counter <= flush_counter + 1;
                     end
                 end
                 
-                default: state <= S_IDLE;
+                default: ;
             endcase
         end
     end
@@ -189,7 +223,7 @@ module icache
     assign resp_hit = (state == S_LOOKUP) && cache_hit;
     
     assign mem_req_valid = (state == S_MISS_REQ);
-    assign mem_req_addr = {req_addr_r[ADDR_WIDTH-1:OFFSET_BITS], {OFFSET_BITS{1'b0}}};  // Line-aligned
+    assign mem_req_addr = {req_addr_r[P_ADDR_WIDTH-1:OFFSET_BITS], {OFFSET_BITS{1'b0}}};  // Line-aligned
     
     assign busy = (state != S_IDLE);
 
@@ -281,9 +315,9 @@ endmodule
 module fetch_unit
     import gpgpu_pkg::*;
 #(
-    parameter int NUM_WARPS      = WARPS_PER_CORE,
-    parameter int ICACHE_SIZE    = 4096,
-    parameter int FETCH_BUF_DEPTH = 2
+    parameter int NUM_WARPS        = WARPS_PER_CORE,
+    parameter int P_ICACHE_SIZE    = 4096,
+    parameter int FETCH_BUF_DEPTH  = 2
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -354,6 +388,59 @@ module fetch_unit
     } fetch_state_t;
     
     fetch_state_t state, next_state;
+
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= F_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            F_IDLE: begin
+                if (sched_valid && !fbuf_full && !icache_busy) begin
+                    next_state = F_CACHE_REQ;
+                end
+            end
+            
+            F_CACHE_REQ: begin
+                if (warp_flush[fetch_warp_id]) begin
+                    next_state = F_IDLE;
+                end else if (icache_req_ready) begin
+                    next_state = F_CACHE_WAIT;
+                end
+            end
+            
+            F_CACHE_WAIT: begin
+                if (warp_flush[fetch_warp_id]) begin
+                    next_state = F_IDLE;
+                end else if (icache_resp_valid) begin
+                    next_state = F_BUFFER;
+                end
+            end
+            
+            F_BUFFER: begin
+                if (fbuf_wr_ready) begin
+                    next_state = F_IDLE;
+                end else begin
+                    next_state = F_STALL;
+                end
+            end
+            
+            F_STALL: begin
+                if (fbuf_wr_ready) begin
+                    next_state = F_IDLE;
+                end
+            end
+            
+            default: next_state = F_IDLE;
+        endcase
+    end
     
     // Current fetch context
     logic [WARP_ID_WIDTH-1:0] fetch_warp_id;
@@ -378,10 +465,10 @@ module fetch_unit
     //=========================================================================
     
     icache #(
-        .CACHE_SIZE(ICACHE_SIZE),
+        .CACHE_SIZE(P_ICACHE_SIZE),
         .LINE_SIZE(32),
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .INST_WIDTH(INST_WIDTH)
+        .P_ADDR_WIDTH(ADDR_WIDTH),
+        .P_INST_WIDTH(INST_WIDTH)
     ) u_icache (
         .clk(clk),
         .rst_n(rst_n),
@@ -504,13 +591,9 @@ module fetch_unit
         end
     end
     
-    //=========================================================================
-    // Fetch State Machine
-    //=========================================================================
-    
+    // Registered FSM Outputs and Data
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= F_IDLE;
             fetch_warp_id <= '0;
             fetch_pc <= '0;
             fetch_mask <= '0;
@@ -524,46 +607,23 @@ module fetch_unit
                         fetch_warp_id <= sched_warp_id;
                         fetch_pc <= sched_pc;
                         fetch_mask <= sched_active_mask;
-                        state <= F_CACHE_REQ;
-                    end
-                end
-                
-                F_CACHE_REQ: begin
-                    if (warp_flush[fetch_warp_id]) begin
-                        state <= F_IDLE;
-                    end else if (icache_req_ready) begin
-                        state <= F_CACHE_WAIT;
                     end
                 end
                 
                 F_CACHE_WAIT: begin
-                    if (warp_flush[fetch_warp_id]) begin
-                        state <= F_IDLE;
-                    end else if (icache_resp_valid) begin
-                        // Capture the instruction when it's valid
+                    if (!warp_flush[fetch_warp_id] && icache_resp_valid) begin
                         captured_instr <= icache_resp_instr;
                         captured_valid <= 1'b1;
-                        state <= F_BUFFER;
                     end
                 end
                 
-                F_BUFFER: begin
+                F_BUFFER, F_STALL: begin
                     if (fbuf_wr_ready) begin
                         captured_valid <= 1'b0;
-                        state <= F_IDLE;
-                    end else begin
-                        state <= F_STALL;
                     end
                 end
                 
-                F_STALL: begin
-                    if (fbuf_wr_ready) begin
-                        captured_valid <= 1'b0;
-                        state <= F_IDLE;
-                    end
-                end
-                
-                default: state <= F_IDLE;
+                default: ;
             endcase
         end
     end

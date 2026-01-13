@@ -9,6 +9,10 @@
 // Date:        December 20, 2025
 //=============================================================================
 
+`default_nettype none
+
+/* verilator lint_off DECLFILENAME */
+
 `include "gpgpu_defines.svh"
 
 //=============================================================================
@@ -391,6 +395,52 @@ module mem_request_sequencer
     
     state_t state, next_state;
     
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= S_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            S_IDLE: begin
+                if (coalesced_valid) begin
+                    if (next_trans_valid) begin
+                        next_state = S_ISSUE;
+                    end else begin
+                        next_state = S_DONE;
+                    end
+                end
+            end
+            S_ISSUE: begin
+                if (mem_req_ready) begin
+                    next_state = S_WAIT_RESP;
+                end
+            end
+            S_WAIT_RESP: begin
+                if (mem_resp_valid) begin
+                    next_state = S_COLLECT;
+                end
+            end
+            S_COLLECT: begin
+                if (pending_count > 1) begin
+                    next_state = S_ISSUE;
+                end else begin
+                    next_state = S_DONE;
+                end
+            end
+            S_DONE: begin
+                next_state = S_IDLE;
+            end
+            default: next_state = S_IDLE;
+        endcase
+    end
+
     // Transaction tracking
     logic [$clog2(MAX_TRANSACTIONS)-1:0] current_trans;
     logic [MAX_TRANSACTIONS-1:0] trans_complete;
@@ -437,10 +487,9 @@ module mem_request_sequencer
         end
     end
     
-    // State machine
+    // Registered FSM Outputs and Data
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= S_IDLE;
             current_trans <= '0;
             trans_complete <= '0;
             trans_valid_r <= '0;
@@ -475,25 +524,9 @@ module mem_request_sequencer
                         result_mask_accum <= '0;
                         beat_idx <= '0;
                         
-                        // Find first transaction
                         if (next_trans_valid) begin
                             current_trans <= next_trans;
-                            state <= S_ISSUE;
-                        end else begin
-                            state <= S_DONE;
                         end
-                    end
-                end
-                
-                S_ISSUE: begin
-                    if (mem_req_ready) begin
-                        state <= S_WAIT_RESP;
-                    end
-                end
-                
-                S_WAIT_RESP: begin
-                    if (mem_resp_valid) begin
-                        state <= S_COLLECT;
                     end
                 end
                 
@@ -501,15 +534,10 @@ module mem_request_sequencer
                     // Collect data for all threads in this transaction
                     for (int t = 0; t < NUM_THREADS; t++) begin
                         if (trans_thread_mask_r[current_trans][t]) begin
-                            logic [5:0] byte_off;
-                            byte_off = trans_byte_offset_r[current_trans][t];
-                            
                             if (!is_write_r) begin
                                 if (is_64bit_r) begin
-                                    // 64-bit load - extract 8 bytes
                                     result_accum[t] <= mem_resp_rdata;
                                 end else begin
-                                    // 32-bit load - extract 4 bytes
                                     logic [31:0] data32;
                                     data32 = mem_resp_rdata[31:0];
                                     if (is_signed_r) begin
@@ -523,23 +551,13 @@ module mem_request_sequencer
                         end
                     end
                     
-                    // Mark transaction complete
                     trans_complete[current_trans] <= 1'b1;
-                    
-                    // Move to next transaction or done
                     if (pending_count > 1) begin
                         current_trans <= next_trans;
-                        state <= S_ISSUE;
-                    end else begin
-                        state <= S_DONE;
                     end
                 end
                 
-                S_DONE: begin
-                    state <= S_IDLE;
-                end
-                
-                default: state <= S_IDLE;
+                default: ;
             endcase
         end
     end
@@ -762,6 +780,103 @@ module lsu
     } lsu_state_t;
     
     lsu_state_t state, next_state;
+
+    // FSM State Update
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= LSU_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next State Logic
+    always_comb begin
+        next_state = state;
+        case (state)
+            LSU_IDLE: begin
+                if (req_valid && (is_load || is_store || is_atomic)) begin
+                    if (is_atomic) begin
+                        next_state = LSU_ATOMIC_READ;
+                    end else if (is_global) begin
+                        next_state = LSU_GLOBAL_ACCESS;
+                    end else begin
+                        next_state = LSU_SHARED_ACCESS;
+                    end
+                end
+            end
+            
+            LSU_GLOBAL_ACCESS: begin
+                if (!exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]]) begin
+                    if (thread_idx >= NUM_THREADS - 1) begin
+                        next_state = LSU_COMPLETE;
+                    end
+                end else if (gmem_req_ready) begin
+                    next_state = LSU_WAIT_GLOBAL;
+                end
+            end
+            
+            LSU_WAIT_GLOBAL: begin
+                if (gmem_resp_valid || (is_store_r && gmem_store_complete)) begin
+                    if (thread_idx >= NUM_THREADS - 1) begin
+                        next_state = LSU_COMPLETE;
+                    end else begin
+                        next_state = LSU_GLOBAL_ACCESS;
+                    end
+                end
+            end
+            
+            LSU_SHARED_ACCESS: begin
+                if (smem_req_ready) begin
+                    next_state = LSU_WAIT_SHARED;
+                end
+            end
+            
+            LSU_WAIT_SHARED: begin
+                if (smem_resp_valid || is_store_r) begin
+                    next_state = LSU_COMPLETE;
+                end
+            end
+            
+            LSU_ATOMIC_READ: begin
+                if (!exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]]) begin
+                    if (thread_idx >= NUM_THREADS - 1) begin
+                        next_state = LSU_COMPLETE;
+                    end
+                end else if (gmem_req_ready) begin
+                    next_state = LSU_ATOMIC_WAIT_READ;
+                end
+            end
+            
+            LSU_ATOMIC_WAIT_READ: begin
+                if (gmem_resp_valid) begin
+                    next_state = LSU_ATOMIC_WRITE;
+                end
+            end
+            
+            LSU_ATOMIC_WRITE: begin
+                if (gmem_req_ready) begin
+                    next_state = LSU_ATOMIC_WAIT_WRITE;
+                end
+            end
+            
+            LSU_ATOMIC_WAIT_WRITE: begin
+                if (thread_idx >= NUM_THREADS - 1) begin
+                    next_state = LSU_COMPLETE;
+                end else begin
+                    next_state = LSU_ATOMIC_READ;
+                end
+            end
+            
+            LSU_COMPLETE: begin
+                if (resp_ready || is_store_r) begin
+                    next_state = LSU_IDLE;
+                end
+            end
+            
+            default: next_state = LSU_IDLE;
+        endcase
+    end
     
     // Registered request data
     logic [WARP_ID_WIDTH-1:0] warp_id_r;
@@ -811,10 +926,9 @@ module lsu
         end
     end
     
-    // State machine
+    // Registered FSM Outputs and Data
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= LSU_IDLE;
             warp_id_r <= '0;
             rd_r <= '0;
             exec_mask_r <= '0;
@@ -842,7 +956,7 @@ module lsu
                         exec_mask_r <= exec_mask;
                         eff_addr_r <= eff_addr;
                         store_data_r <= req_store_data;
-                        compare_data_r <= req_store_data;  // For CAS, compare value
+                        compare_data_r <= req_store_data;
                         is_load_r <= is_load;
                         is_store_r <= is_store;
                         is_atomic_r <= is_atomic;
@@ -854,145 +968,72 @@ module lsu
                         result_data_r <= '0;
                         result_mask_r <= '0;
                         thread_idx <= '0;
-                        
-                        if (is_atomic) begin
-                            // Atomic operations go to read phase first
-                            state <= LSU_ATOMIC_READ;
-                        end else if (is_global) begin
-                            state <= LSU_GLOBAL_ACCESS;
-                        end else begin
-                            state <= LSU_SHARED_ACCESS;
-                        end
                     end
                 end
                 
                 LSU_GLOBAL_ACCESS: begin
-                    // Find next active thread for sequential access
-                    // If current thread is not active, skip to next
                     if (!exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]]) begin
-                        // Skip inactive thread
-                        if (thread_idx >= NUM_THREADS - 1) begin
-                            state <= LSU_COMPLETE;
-                        end else begin
+                        if (thread_idx < NUM_THREADS - 1) begin
                             thread_idx <= thread_idx + 1;
-                            // Stay in this state to check next thread
                         end
-                    end else if (gmem_req_ready) begin
-                        state <= LSU_WAIT_GLOBAL;
                     end
                 end
                 
                 LSU_WAIT_GLOBAL: begin
-                    // For loads: wait for gmem_resp_valid
-                    // For stores: wait for gmem_store_complete (AXI write response)
                     if (gmem_resp_valid || (is_store_r && gmem_store_complete)) begin
-                        // Store response data
                         if (is_load_r) begin
                             if (is_64bit_r) begin
                                 result_data_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= gmem_resp_rdata;
                             end else begin
-                                // 32-bit load - use pre-computed extended value
                                 result_data_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= gmem_data_extended;
                             end
                             result_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= 1'b1;
                         end
-                        
-                        // Find next thread
                         thread_idx <= thread_idx + 1;
-                        
-                        // Check if more threads
-                        if (thread_idx >= NUM_THREADS - 1) begin
-                            state <= LSU_COMPLETE;
-                        end else begin
-                            // Look for next active thread
-                            state <= LSU_GLOBAL_ACCESS;
-                        end
-                    end
-                end
-                
-                LSU_SHARED_ACCESS: begin
-                    if (smem_req_ready) begin
-                        state <= LSU_WAIT_SHARED;
                     end
                 end
                 
                 LSU_WAIT_SHARED: begin
                     if (smem_resp_valid || is_store_r) begin
-                        // Shared memory handles all threads at once
                         if (is_load_r) begin
                             for (int t = 0; t < NUM_THREADS; t++) begin
                                 if (exec_mask_r[t]) begin
                                     if (is_64bit_r) begin
                                         result_data_r[t] <= smem_resp_rdata[t];
                                     end else begin
-                                        // 32-bit load - use pre-computed extended value
                                         result_data_r[t] <= smem_data_extended[t];
                                     end
                                     result_mask_r[t] <= 1'b1;
                                 end
                             end
                         end
-                        state <= LSU_COMPLETE;
                     end
                 end
                 
-                //=============================================================
-                // Atomic operation states (serialized read-modify-write)
-                //=============================================================
-                
                 LSU_ATOMIC_READ: begin
-                    // Issue read to memory for current thread
                     if (!exec_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]]) begin
-                        // Skip inactive thread
-                        if (thread_idx >= NUM_THREADS - 1) begin
-                            state <= LSU_COMPLETE;
-                        end else begin
+                        if (thread_idx < NUM_THREADS - 1) begin
                             thread_idx <= thread_idx + 1;
                         end
-                    end else if (gmem_req_ready) begin
-                        state <= LSU_ATOMIC_WAIT_READ;
                     end
                 end
                 
                 LSU_ATOMIC_WAIT_READ: begin
                     if (gmem_resp_valid) begin
-                        // Store old value for return
                         if (is_64bit_r) begin
                             result_data_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= gmem_resp_rdata;
                         end else begin
                             result_data_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= gmem_data_extended;
                         end
                         result_mask_r[thread_idx[THREAD_ID_WIDTH-1:0]] <= 1'b1;
-                        // Proceed to write phase
-                        state <= LSU_ATOMIC_WRITE;
-                    end
-                end
-                
-                LSU_ATOMIC_WRITE: begin
-                    // Write new value to memory
-                    if (gmem_req_ready) begin
-                        state <= LSU_ATOMIC_WAIT_WRITE;
                     end
                 end
                 
                 LSU_ATOMIC_WAIT_WRITE: begin
-                    // For stores, we assume completion when ready was asserted
-                    // Move to next thread or complete
                     thread_idx <= thread_idx + 1;
-                    if (thread_idx >= NUM_THREADS - 1) begin
-                        state <= LSU_COMPLETE;
-                    end else begin
-                        state <= LSU_ATOMIC_READ;
-                    end
                 end
                 
-                LSU_COMPLETE: begin
-                    if (resp_ready || is_store_r) begin
-                        state <= LSU_IDLE;
-                    end
-                end
-                
-                default: state <= LSU_IDLE;
+                default: ;
             endcase
         end
     end
@@ -1093,9 +1134,9 @@ endmodule
 module shared_mem_bank
     import gpgpu_pkg::*;
 #(
-    parameter int BANK_SIZE  = 2048,    // Words per bank
-    parameter int DATA_WIDTH = 64,
-    parameter int ADDR_WIDTH = 11       // log2(2048)
+    parameter int BANK_SIZE    = 2048,    // Words per bank
+    parameter int P_DATA_WIDTH = 64,
+    parameter int P_ADDR_WIDTH = 11       // log2(2048)
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -1111,10 +1152,10 @@ module shared_mem_bank
 );
 
     // Memory array
-    logic [DATA_WIDTH-1:0] mem [0:BANK_SIZE-1];
+    logic [P_DATA_WIDTH-1:0] mem [0:BANK_SIZE-1];
     
     // Registered outputs
-    logic [DATA_WIDTH-1:0] rdata_r;
+    logic [P_DATA_WIDTH-1:0] rdata_r;
     logic valid_r;
     
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1153,10 +1194,10 @@ endmodule
 module shared_memory
     import gpgpu_pkg::*;
 #(
-    parameter int NUM_BANKS   = 8,           // Number of banks (match WARP_SIZE)
-    parameter int BANK_SIZE   = 2048,        // Words per bank
-    parameter int DATA_WIDTH  = 64,
-    parameter int ADDR_WIDTH  = 14           // Total address width (16KB)
+    parameter int NUM_BANKS     = 8,           // Number of banks (match WARP_SIZE)
+    parameter int BANK_SIZE     = 2048,        // Words per bank
+    parameter int P_DATA_WIDTH  = 64,
+    parameter int P_ADDR_WIDTH  = 14           // Total address width (16KB)
 )(
     input  logic                                      clk,
     input  logic                                      rst_n,
@@ -1248,8 +1289,8 @@ module shared_memory
         for (b = 0; b < NUM_BANKS; b++) begin : gen_banks
             shared_mem_bank #(
                 .BANK_SIZE(BANK_SIZE),
-                .DATA_WIDTH(DATA_WIDTH),
-                .ADDR_WIDTH(BANK_ADDR_WIDTH)
+                .P_DATA_WIDTH(P_DATA_WIDTH),
+                .P_ADDR_WIDTH(BANK_ADDR_WIDTH)
             ) bank (
                 .clk(clk),
                 .rst_n(rst_n),
@@ -1286,8 +1327,8 @@ module shared_memory
     logic all_banks_valid;
     always_comb begin
         all_banks_valid = 1'b1;
-        for (int b = 0; b < NUM_BANKS; b++) begin
-            if (bank_req[b] && !bank_valid[b]) begin
+        for (int bank_idx = 0; bank_idx < NUM_BANKS; bank_idx++) begin
+            if (bank_req[bank_idx] && !bank_valid[bank_idx]) begin
                 all_banks_valid = 1'b0;
             end
         end
