@@ -360,6 +360,10 @@ module memory_controller
 
     // Next State Logic
     always_comb begin
+        logic [CHANNEL_BITS-1:0] ch_idx;
+        logic [BANK_BITS-1:0]    bnk_idx;
+        logic [ROW_BITS-1:0]     row_idx;
+
         for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin
             for (int bnk = 0; bnk < P_NUM_BANKS; bnk++) begin
                 next_bank_state[ch][bnk] = bank_state[ch][bnk];
@@ -367,27 +371,31 @@ module memory_controller
         end
 
         if (req_selected && !refresh_pending[req_queue[selected_req].channel]) begin
-            automatic logic [CHANNEL_BITS-1:0] ch  = req_queue[selected_req].channel;
-            automatic logic [BANK_BITS-1:0]    bnk = req_queue[selected_req].bank;
-            automatic logic [ROW_BITS-1:0]     row = req_queue[selected_req].row;
+            ch_idx  = req_queue[selected_req].channel;
+            bnk_idx = req_queue[selected_req].bank;
+            row_idx = req_queue[selected_req].row;
             
-            case (bank_state[ch][bnk])
+            case (bank_state[ch_idx][bnk_idx])
                 BANK_IDLE: begin
-                    next_bank_state[ch][bnk] = BANK_ACTIVATING;
+                    next_bank_state[ch_idx][bnk_idx] = BANK_ACTIVATING;
                 end
                 BANK_ACTIVE: begin
-                    if (open_row[ch][bnk] == row) begin
+                    if (open_row[ch_idx][bnk_idx] == row_idx) begin
                         if (req_queue[selected_req].is_write) begin
-                            next_bank_state[ch][bnk] = BANK_WRITING;
+                            next_bank_state[ch_idx][bnk_idx] = BANK_WRITING;
                         end else begin
-                            next_bank_state[ch][bnk] = BANK_READING;
+                            next_bank_state[ch_idx][bnk_idx] = BANK_READING;
                         end
                     end else begin
-                        next_bank_state[ch][bnk] = BANK_PRECHARGING;
+                        next_bank_state[ch_idx][bnk_idx] = BANK_PRECHARGING;
                     end
                 end
                 default: ;
             endcase
+        end else begin
+            ch_idx  = '0;
+            bnk_idx = '0;
+            row_idx = '0;
         end
 
         for (int ch = 0; ch < P_NUM_CHANNELS; ch++) begin

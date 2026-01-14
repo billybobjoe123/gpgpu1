@@ -116,9 +116,9 @@ module tb_fetch_unit;
         .pc_update_valid(pc_update_valid),
         .pc_update_warp_id(pc_update_warp_id),
         .pc_update_value(pc_update_value),
-        .pc_advance_valid(),
-        .pc_advance_warp_id(),
-        .pc_advance_value(),
+        .pc_advance_valid(/* unused */),
+        .pc_advance_warp_id(/* unused */),
+        .pc_advance_value(/* unused */),
         .busy(busy),
         .warp_fetch_ready(warp_fetch_ready)
     );
@@ -129,7 +129,7 @@ module tb_fetch_unit;
     
     initial begin
         clk = 0;
-        forever #(CLK_PERIOD/2) clk = ~clk;
+        forever #(CLK_PERIOD/2) clk <= ~clk;
     end
     
     //=========================================================================

@@ -883,7 +883,9 @@ module memory_arbiter
     //=========================================================================
     
     always_comb begin
+        logic [5:0] byte_offset;
         // Default values
+        byte_offset = '0;
         axi_arvalid = 1'b0;
         axi_araddr  = '0;
         axi_arlen   = '0;
@@ -928,7 +930,6 @@ module memory_arbiter
             end
             
             ARB_WRITE_DATA: begin
-                automatic logic [5:0] byte_offset;
                 byte_offset = write_addr_r[5:0];  // Byte offset within 64-byte (512-bit) word
                 
                 axi_wvalid = core_wvalid[granted_core];

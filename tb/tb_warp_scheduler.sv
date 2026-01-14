@@ -208,7 +208,7 @@ module tb_warp_scheduler;
     //=========================================================================
     
     initial clk = 0;
-    always #(CLK_PERIOD/2) clk = ~clk;
+    always #(CLK_PERIOD/2) clk <= ~clk;
     
     //=========================================================================
     // Simulated Fetch Unit - Auto PC Update

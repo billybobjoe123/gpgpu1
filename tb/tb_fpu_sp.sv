@@ -59,7 +59,7 @@ module tb_fpu_sp;
     //=========================================================================
     
     initial clk = 0;
-    always #(CLK_PERIOD/2) clk = ~clk;
+    always #(CLK_PERIOD/2) clk <= ~clk;
     
     //=========================================================================
     // DUT Instantiation
@@ -143,16 +143,19 @@ module tb_fpu_sp;
     
     // Issue operation and wait for proper number of cycles
     task automatic issue_and_wait(input int latency);
+        $display("[DEBUG] Issuing op, expecting latency %0d", latency);
         valid_in = 1'b1;
         @(posedge clk);
         #1;
+        $display("[DEBUG] Cycle 1: valid_out=%b, result[0]=0x%08x", valid_out, result[0][31:0]);
         valid_in = 1'b0;
         
-        // Wait for pipeline latency (latency-1 more cycles since we already advanced one)
-        repeat(latency - 1) begin
-            @(posedge clk);
-            #1;
-        end
+    // Wait for pipeline latency (latency-1 more cycles since we already advanced one)
+    for (int i = 2; i <= latency; i++) begin
+        @(posedge clk);
+        #1;
+        $display("[DEBUG] Cycle %0d: valid_out=%b, result[0]=0x%08x", i, valid_out, result[0][31:0]);
+    end
     endtask
     
     task automatic check_result_bits(

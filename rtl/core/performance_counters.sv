@@ -22,7 +22,7 @@ module performance_counters
 #(
     parameter int NUM_COUNTERS    = 32,
     parameter int COUNTER_WIDTH   = 48,  // 48-bit counters (good for hours of operation)
-    parameter int NUM_CORES       = 4
+    parameter int P_NUM_CORES     = 4
 )(
     input  logic                    clk,
     input  logic                    rst_n,
@@ -39,30 +39,30 @@ module performance_counters
     // Global Events
     //=========================================================================
     input  logic                    gpu_busy,        // GPU is executing
-    input  logic [NUM_CORES-1:0]    cores_active,    // Active cores bitmap
+    input  logic [P_NUM_CORES-1:0]  cores_active,    // Active cores bitmap
     
     //=========================================================================
     // Per-Core Events (from aggregated core signals)
     //=========================================================================
-    input  logic [NUM_CORES-1:0]    core_instr_valid,     // Instruction retired
-    input  logic [NUM_CORES-1:0]    core_instr_is_alu,    // ALU instruction
-    input  logic [NUM_CORES-1:0]    core_instr_is_fpu,    // FPU instruction
-    input  logic [NUM_CORES-1:0]    core_instr_is_mem,    // Memory instruction
-    input  logic [NUM_CORES-1:0]    core_instr_is_branch, // Branch instruction
-    input  logic [NUM_CORES-1:0]    core_instr_is_shuffle,// Shuffle instruction
-    input  logic [NUM_CORES-1:0]    core_instr_is_atomic, // Atomic instruction
+    input  logic [P_NUM_CORES-1:0]  core_instr_valid,     // Instruction retired
+    input  logic [P_NUM_CORES-1:0]  core_instr_is_alu,    // ALU instruction
+    input  logic [P_NUM_CORES-1:0]  core_instr_is_fpu,    // FPU instruction
+    input  logic [P_NUM_CORES-1:0]  core_instr_is_mem,    // Memory instruction
+    input  logic [P_NUM_CORES-1:0]  core_instr_is_branch, // Branch instruction
+    input  logic [P_NUM_CORES-1:0]  core_instr_is_shuffle,// Shuffle instruction
+    input  logic [P_NUM_CORES-1:0]  core_instr_is_atomic, // Atomic instruction
     
-    input  logic [NUM_CORES-1:0]    core_branch_taken,    // Branch taken
-    input  logic [NUM_CORES-1:0]    core_branch_divergent,// Divergent branch
+    input  logic [P_NUM_CORES-1:0]  core_branch_taken,    // Branch taken
+    input  logic [P_NUM_CORES-1:0]  core_branch_divergent,// Divergent branch
     
-    input  logic [NUM_CORES-1:0]    core_stall_fetch,     // Fetch stage stall
-    input  logic [NUM_CORES-1:0]    core_stall_decode,    // Decode stage stall
-    input  logic [NUM_CORES-1:0]    core_stall_operand,   // Operand fetch stall
-    input  logic [NUM_CORES-1:0]    core_stall_execute,   // Execute stage stall
-    input  logic [NUM_CORES-1:0]    core_stall_memory,    // Memory stage stall
-    input  logic [NUM_CORES-1:0]    core_stall_scoreboard,// Scoreboard stall
+    input  logic [P_NUM_CORES-1:0]  core_stall_fetch,     // Fetch stage stall
+    input  logic [P_NUM_CORES-1:0]  core_stall_decode,    // Decode stage stall
+    input  logic [P_NUM_CORES-1:0]  core_stall_operand,   // Operand fetch stall
+    input  logic [P_NUM_CORES-1:0]  core_stall_execute,   // Execute stage stall
+    input  logic [P_NUM_CORES-1:0]  core_stall_memory,    // Memory stage stall
+    input  logic [P_NUM_CORES-1:0]  core_stall_scoreboard,// Scoreboard stall
     
-    input  logic [NUM_CORES-1:0]    core_warp_at_barrier, // Warp waiting at barrier
+    input  logic [P_NUM_CORES-1:0]  core_warp_at_barrier, // Warp waiting at barrier
     
     //=========================================================================
     // Memory Events
@@ -152,9 +152,9 @@ module performance_counters
     //=========================================================================
     
     // Helper: count set bits (popcount) for aggregating across cores
-    function automatic logic [$clog2(NUM_CORES+1)-1:0] popcount(input logic [NUM_CORES-1:0] v);
+    function automatic logic [$clog2(P_NUM_CORES+1)-1:0] popcount(input logic [P_NUM_CORES-1:0] v);
         popcount = '0;
-        for (int i = 0; i < NUM_CORES; i++) begin
+        for (int i = 0; i < P_NUM_CORES; i++) begin
             popcount = popcount + v[i];
         end
     endfunction

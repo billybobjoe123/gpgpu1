@@ -88,7 +88,7 @@ module tb_performance_counters;
     performance_counters #(
         .NUM_COUNTERS    (TB_NUM_COUNTERS),
         .COUNTER_WIDTH   (TB_COUNTER_WIDTH),
-        .NUM_CORES       (TB_NUM_CORES)
+        .P_NUM_CORES     (TB_NUM_CORES)
     ) dut (
         .clk                  (clk),
         .rst_n                (rst_n),

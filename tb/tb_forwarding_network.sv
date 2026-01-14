@@ -89,7 +89,7 @@ module tb_forwarding_network;
     //=========================================================================
     
     initial clk = 0;
-    always #(CLK_PERIOD/2) clk = ~clk;
+    always #(CLK_PERIOD/2) clk <= ~clk;
     
     //=========================================================================
     // DUT Instantiation
